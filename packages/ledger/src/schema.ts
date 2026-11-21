@@ -26,6 +26,8 @@ export const SourceRole = z.enum(['requirement', 'acceptance_criteria', 'issue',
 
 export const ElementProps = z.strictObject({
   title: z.string().optional(),
+  /** One short line saying what the element is; list reads show it instead of the description. Required on add_element when proposing (validate.ts). Elements only: LikeC4 has no relationship summary. */
+  summary: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   technology: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
@@ -121,6 +123,11 @@ export const ChangeSet = z.strictObject({
   promotion: Promotion.optional(),
   /** Declared architecture inferred during adoption rather than designed: unverified knowledge until evidence says otherwise. */
   inferred: z.boolean().optional(),
+  /**
+   * Wording only (element summaries): applies at promotion at once and says nothing about whether
+   * anything exists, so status, qualification and implementation ignore it. Written by migrate.
+   */
+  editorial: z.boolean().optional(),
 })
 
 export type MetadataValue = z.infer<typeof MetadataValue>

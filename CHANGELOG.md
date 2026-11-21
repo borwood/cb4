@@ -8,6 +8,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
+### Upgrading
+
+- **Breaking:** `overview`, `search` and `expand` answer in an indented outline by default (one
+  line per entity, its summary and description on the lines below, a first line naming the read
+  and `head`). Pass `format=json` for the same content as JSON. Errors stay JSON.
+- **Breaking:** `locate` answers in an outline by default too, within a character budget
+  (`budget=<chars>`, default 40,000). `format=json` gives the old shape plus `omitted` on every
+  part the budget cut, `relatedElided` and per-level `elided` counts, `degraded`,
+  `summariesDerived` and `budget`. Under budget pressure connected and related entities can come
+  back as minimal rows (no `summary`) and a container as a row only. In `cb4-ledger`, `locate()`
+  now returns `{ text, data }`, with the old result as `data`.
+- **Breaking:** `detail=medium` now shows an element's `summary` instead of its full description,
+  and is the default for `overview`, `search` and `expand`. The description is in `element` and in
+  `locate`'s focus. Code reading `description` from medium rows should read `summary`.
+- **Breaking:** proposing an `add_element` now requires a `summary`: one line, 200 characters at
+  most, saying what the element is (`E_MISSING_SUMMARY`). Change sets already in the ledger are
+  unaffected and still promote. A summary can be replaced but not removed.
+- `expand` results as JSON changed shape: relationships come as single `relationships` plus
+  `bundles` (several edges between the same two rows, counted), with `elided`, `degraded`,
+  `hiddenRelationships`, `focus` and `budget` reporting what was cut. `relationships=direct` is
+  still accepted and means the new default, `bundled`.
+
+### Added
+
+- Character budgets for `search`, `expand` and `locate` (`budget=<chars>`, default 40,000). The answer is the
+  most useful view that fits: detail falls off with distance from the entity you asked about
+  (descriptions first, then edge lists, then summaries, then whole rows), and everything left out
+  is counted with the call that brings it back. A depth-2 `expand` of a large system that used to
+  return 92,000 characters now fits in 40,000 with every entity listed, and the largest `locate`
+  there went from 47,000 characters of JSON to a 34,000-character outline with nothing cut.
+- `expand focus_terms=[...]`: entities whose id, fqn or title hold every word of a term are listed
+  even below `depth`, shown with their full description, and kept longest under the budget.
+- Relationship bundling in `expand`: relationships with an end in the subtree are counted between
+  the rows shown (or an outside branch, named by title) instead of listed one by one, and meet at
+  shallower containers when the budget is tight. Relationships deep inside the subtree are now
+  included, bundled at the row that contains them.
+- `search under=<id>` scopes a search to the descendants of an element.
+- Element summaries, stored as LikeC4's native `summary` property: `add_element` and
+  `update_element` take `summary`, target views show pending summaries, and `bootstrap mode=adopt`
+  copies existing summaries or derives one from the description's first sentence. Elements without
+  a stored summary show that first sentence on read, marked `summaryDerived` (`summary (derived)` in
+  the outline); reads never write it back. `overview` counts elements by summary: stored, derived,
+  none.
+- Validation warns when a summary runs past one line or 200 characters (`W_LONG_SUMMARY`) and when
+  an update changes the description but not the summary (`W_SUMMARY_STALE`).
+- `migrate what=summaries` stores the summaries reads have been deriving, as one change set marked
+  `editorial`, proposed, accepted and promoted in one call. Editorial change sets may only set
+  summaries; they apply at once and never count toward an entity's status, qualification or
+  implementation, so a planned element stays intended and a failing one stays failed.
+  `dry_run=true` lists what would be stored. Run it once per repository after upgrading.
+
+### Fixed
+
+- `bootstrap mode=adopt` no longer copies an element's summary into its description when the
+  element has a summary and no description.
+- The `cb4-mcp` README's setup for other MCP clients ran `npx -y cb4`, which is not this package;
+  it now runs `npx -y cb4-mcp`. Its library example imports from `cb4-mcp` too.
+
 ## [0.3.0] - 2026-10-30
 
 ### Upgrading
@@ -178,7 +238,8 @@ First public release, renamed from the `like-b4` prototype.
 - MCP server with seventeen bounded, compact tools; a relative model-repository path anchors to the
   main worktree so linked worktrees and subagents share one ledger.
 
-[Unreleased]: https://github.com/borwood/cb4/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/borwood/cb4/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/borwood/cb4/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/borwood/cb4/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/borwood/cb4/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/borwood/cb4/compare/0db645a...v0.2.0

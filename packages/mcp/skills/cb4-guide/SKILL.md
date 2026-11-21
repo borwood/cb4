@@ -140,10 +140,17 @@ if it verified anything; set `implementation` or any `b4-*` tag yourself.
 ## Day-to-day loops
 
 - **Before changing code**: `locate <id>` when you were handed an entity id, to see it in full,
-  what it relates to and every container up to the root; otherwise `search` or `expand` the
-  area. Then `element <id> qualify=true` for the parts you will touch. A `pending` list on a row means the entity is not exactly as drawn; read
-  `b4_change` to find the change set and `change <id>` for what is still unproven.
-- **When the architecture will change**: draft the change set from the requirement, `validate`,
+  what it relates to and every container up to the root; otherwise `search` (with `under=<id>`)
+  or `expand` the area, naming what you care about in `focus_terms`. All three answer within a
+  character budget and list what they left out, with the call that brings it back; follow those
+  instead of raising the budget. Then `element <id> qualify=true` for the parts you will touch.
+  A `pending` list on a row means the entity is not exactly as drawn; read `b4_change` to find the
+  change set and `change <id>` for what is still unproven.
+- **Once per repository**: if `overview` reports summaries derived from descriptions, run
+  `migrate what=summaries` (try `dry_run=true` first) to store them. It records one editorial
+  change set and changes no status.
+- **When the architecture will change**: draft the change set from the requirement (every new
+  element needs a one-line `summary`; the detail goes in `description`), `validate`,
   `project render=dsl` (or `html` for a person), `propose`. Promotion is a reviewer's call.
 - **When code lands**: record evidence with the real `code_revision`, an `environment`
   (`local`, `ci-pr`, `staging`, ...), and `targets` for what the run actually exercised.

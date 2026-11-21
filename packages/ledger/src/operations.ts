@@ -77,6 +77,7 @@ export function applyOperation(data: ParsedModelData, ids: WorkingIds, op: Opera
         style: {},
         metadata: { ...(op.metadata ?? {}), [STABLE_ID_KEY]: op.id },
       }
+      if (op.summary) el.summary = { txt: op.summary }
       if (op.description) el.description = { txt: op.description }
       if (op.technology) el.technology = op.technology
       const tags = [...(op.tags ?? [])]
@@ -162,6 +163,8 @@ export function applyOperation(data: ParsedModelData, ids: WorkingIds, op: Opera
 
 export interface PropertyPatch {
   title?: string
+  /** Elements only. */
+  summary?: string | null
   description?: string | null
   technology?: string | null
   tags?: string[]
@@ -175,6 +178,10 @@ export interface PropertyPatch {
  */
 export function patchProps(target: Record<string, any>, set: PropertyPatch) {
   if (set.title !== undefined) target.title = set.title
+  if (set.summary !== undefined) {
+    if (set.summary === null) delete target.summary
+    else target.summary = { txt: set.summary }
+  }
   if (set.description !== undefined) {
     if (set.description === null) delete target.description
     else target.description = { txt: set.description }

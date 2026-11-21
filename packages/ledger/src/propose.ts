@@ -48,17 +48,17 @@ export async function validateInContext(loaded: Pick<LoadedModel, 'parsedData' |
   const registry = IdentityRegistry.fromModel(loaded.model)
   const pre = ChangeSet.safeParse(normalizeChangeSetInput(input).input)
   const deps = pre.success ? unpromotedDependencies(pre.data, ledger) : []
-  if (!deps.length) return { ...validateChangeSet(input, { registry, ledger }), projected: [] }
+  if (!deps.length) return { ...validateChangeSet(input, { registry, ledger, authoring: true }), projected: [] }
 
   try {
     const issues: ProjectionIssue[] = []
     const order = orderByDependencies(deps, ledger, issues)
     if (issues.length) throw new ProjectionError('dependencies cannot be ordered', issues)
     const projection = await applyChangeSets(loaded.parsedData, order, { baseline: { source: 'worktree', revision: null }, highlight: false, ledger })
-    return { ...validateChangeSet(input, { registry: projection.registry, ledger }), projected: projection.applied }
+    return { ...validateChangeSet(input, { registry: projection.registry, ledger, authoring: true }), projected: projection.applied }
   } catch (e) {
     if (!(e instanceof ProjectionError)) throw e
-    const result = validateChangeSet(input, { registry, ledger })
+    const result = validateChangeSet(input, { registry, ledger, authoring: true })
     const failing = [...new Set(e.issues.map(i => i.changeId).filter(Boolean))].join(', ')
     const warning: ValidationIssue = {
       severity: 'warning', code: 'W_DEPENDENCY_NOT_PROJECTED', path: '/depends_on',

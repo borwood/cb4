@@ -59,7 +59,7 @@ export async function qualifyBaseline(repoDir: string, opts: QualifyOptions = {}
   // Latest promoted change set operating on each entity (by recorded chronology).
   const lastOp = new Map<string, ChangeRecord>()
   for (const rec of ledger.all()) {
-    if (!rec.changeSet.promotion) continue
+    if (!rec.changeSet.promotion || rec.changeSet.editorial) continue
     for (const p of rec.participants) if (p.via === 'operation') lastOp.set(p.entityId, rec)
   }
 

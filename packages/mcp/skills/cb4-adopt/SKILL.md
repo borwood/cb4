@@ -34,6 +34,9 @@ will show as `unverified` until evidence is recorded. Prefer fewer, truer elemen
    - `intent`: one sentence on what you inferred it from
    - `sources`: `{ ref: "<repo path you read>", role: "other" }` for the files that justified it
    - operations: parents before children; relationships after both endpoints exist
+   - every `add_element` carries a `summary`: one line (200 characters at most) saying what the
+     element is, written for a reader skimming a list. Detail, caveats and history go in
+     `description`. `validate` rejects an element without one (`E_MISSING_SUMMARY`)
    - stable ids you would keep after a rename: `ent-<system>-<component>`, `rel-<from>-<verb>-<to>`
    - local names must not be LikeC4 keywords (`head`, `title`, `kind`, `link`, `style`, ...);
      `validate` rejects them with `E_RESERVED_WORD`, so pick another name and keep the stable id

@@ -16,6 +16,7 @@ operations:
     name: retry_worker
     kind: component
     title: Billing Retry Worker
+    summary: Retries failed card charges off the request path.
     technology: Node.js worker
   - op: add_relationship
     id: rel-billing-api-publishes-retries

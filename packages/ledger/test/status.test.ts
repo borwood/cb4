@@ -171,7 +171,7 @@ describe('removals', () => {
       id: 'CHG-075', title: 'Replace the invoice UI', intent: 'Rewrite, keeping the name',
       operations: [
         { op: 'remove_element', id: 'ent-invoice-ui' },
-        { op: 'add_element', id: 'ent-invoice-ui-v2', parent: 'ent-billing', name: 'invoice_ui', kind: 'container', title: 'Invoice UI v2' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-invoice-ui-v2', parent: 'ent-billing', name: 'invoice_ui', kind: 'container', title: 'Invoice UI v2' },
       ],
     })
     expect(res.deferred).toEqual([])
@@ -203,7 +203,7 @@ describe('moves and inferred change sets', () => {
       id: 'CHG-077', title: 'Inferred: UI stack', intent: 'Seen in package.json', inferred: true,
       operations: [
         { op: 'update_element', id: 'ent-invoice-ui-v2', set: { technology: 'Vue' } },
-        { op: 'add_element', id: 'ent-cdn', parent: null, name: 'cdn', kind: 'system', title: 'CDN', tags: ['external'] },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-cdn', parent: null, name: 'cdn', kind: 'system', title: 'CDN', tags: ['external'] },
       ],
     })
     expect(res.deferred).toEqual([])
@@ -222,8 +222,8 @@ describe('revising intentions', () => {
   it('a fork of a promoted plan applies at once: nothing waits on an entity that does not exist', async () => {
     await land({
       id: 'CHG-300', title: 'Plan', intent: 'plan first', operations: [
-        { op: 'add_element', id: 'ent-plan-a', parent: 'ent-billing', name: 'plan_a', kind: 'component', title: 'Plan A' },
-        { op: 'add_element', id: 'ent-plan-b', parent: 'ent-billing', name: 'plan_b', kind: 'component', title: 'Plan B' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-plan-a', parent: 'ent-billing', name: 'plan_a', kind: 'component', title: 'Plan A' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-plan-b', parent: 'ent-billing', name: 'plan_b', kind: 'component', title: 'Plan B' },
         { op: 'add_relationship', id: 'rel-plan-a-b', from: 'ent-plan-a', to: 'ent-plan-b', kind: 'uses', title: 'uses' },
       ],
     })
@@ -277,7 +277,7 @@ describe('derivations', () => {
 
   it('planPromotion defers only unverified updates and removals of entities that already exist', () => {
     const c = cs([
-      { op: 'add_element', id: 'ent-n', parent: null, name: 'n', kind: 'system' },
+      { op: 'add_element', summary: 'Test element.', id: 'ent-n', parent: null, name: 'n', kind: 'system' },
       { op: 'update_element', id: 'ent-n', set: { title: 'N' } },
       { op: 'update_element', id: 'ent-a', set: { title: 'x' } },
       { op: 'remove_element', id: 'ent-b' },

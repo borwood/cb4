@@ -12,7 +12,7 @@ type Folder = 'As-is' | 'Target'
 
 interface Element { id: string; title: string; tags: string[]; stableId: string | undefined; raw: Record<string, any> }
 
-interface PendingValues { title?: string; description?: string; technology?: string }
+interface PendingValues { title?: string; summary?: string; description?: string; technology?: string }
 
 /** Quote a LikeC4 string. Multi-line content is allowed inside single quotes. */
 const q = (s: string) => `'${s.replace(/'/g, "\\'")}'`
@@ -70,6 +70,7 @@ function pendingOverrides(elements: Element[], ledger?: Ledger): Map<string, Pen
       for (const op of ledger.get(changeId)?.changeSet.operations ?? []) {
         if (op.op !== 'update_element' || op.id !== el.stableId) continue
         if (op.set.title !== undefined) values.title = op.set.title
+        if (op.set.summary) values.summary = op.set.summary
         if (op.set.description) values.description = op.set.description
         if (op.set.technology) values.technology = op.set.technology
       }
@@ -84,7 +85,7 @@ function withOverrides(inScope: Element[], overrides: Map<string, PendingValues>
   for (const el of inScope) {
     const v = overrides.get(el.id)
     if (!v) continue
-    const props = [v.title !== undefined ? `title ${q(v.title)}` : null, v.description ? `description ${q(v.description)}` : null, v.technology ? `technology ${q(v.technology)}` : null].filter(Boolean)
+    const props = [v.title !== undefined ? `title ${q(v.title)}` : null, v.summary ? `summary ${q(v.summary)}` : null, v.description ? `description ${q(v.description)}` : null, v.technology ? `technology ${q(v.technology)}` : null].filter(Boolean)
     rules.push(`include ${el.id} with { ${props.join('; ')} }`)
   }
   return rules

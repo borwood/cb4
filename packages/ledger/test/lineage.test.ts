@@ -28,7 +28,7 @@ describe('lineage', () => {
   it('participantsOf exposes derived_from and succeeded_by as lineage, not operations', () => {
     const cs = ChangeSet.parse({
       id: 'CHG-1', title: 't', intent: 'i', operations: [
-        { op: 'add_element', id: 'ent-b', parent: null, name: 'b', kind: 'system', derived_from: ['ent-a'] },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-b', parent: null, name: 'b', kind: 'system', derived_from: ['ent-a'] },
         { op: 'remove_element', id: 'ent-a', succeeded_by: ['ent-b'] },
       ],
     })
@@ -44,7 +44,7 @@ describe('lineage', () => {
     const registry = IdentityRegistry.fromModel((await loadModel(fx.dir)).model)
     const r = validateChangeSet({
       id: 'CHG-2', title: 't', intent: 'i', operations: [
-        { op: 'add_element', id: 'ent-x', parent: 'ent-billing', name: 'x', kind: 'component', derived_from: ['ent-x', 'ent-ghost', 'ent-ledger-db'] },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-x', parent: 'ent-billing', name: 'x', kind: 'component', derived_from: ['ent-x', 'ent-ghost', 'ent-ledger-db'] },
         { op: 'remove_element', id: 'ent-ledger-db', succeeded_by: ['ent-x', 'ent-later'] },
       ],
     }, { registry })
@@ -61,8 +61,8 @@ describe('lineage', () => {
     await land({
       id: 'CHG-060', title: 'Split charges handler', intent: 'Separate authorisation from capture',
       operations: [
-        { op: 'add_element', id: 'ent-authorize', parent: 'ent-billing-api', name: 'authorize', kind: 'component', title: 'Authorisation', derived_from: ['ent-charges'] },
-        { op: 'add_element', id: 'ent-capture', parent: 'ent-billing-api', name: 'capture', kind: 'component', title: 'Capture', derived_from: ['ent-charges'] },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-authorize', parent: 'ent-billing-api', name: 'authorize', kind: 'component', title: 'Authorisation', derived_from: ['ent-charges'] },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-capture', parent: 'ent-billing-api', name: 'capture', kind: 'component', title: 'Capture', derived_from: ['ent-charges'] },
         { op: 'add_relationship', id: 'rel-capture-persists', from: 'ent-capture', to: 'ent-ledger-db', kind: 'writes_to' },
         { op: 'remove_element', id: 'ent-charges', succeeded_by: ['ent-authorize', 'ent-capture'] },
       ],

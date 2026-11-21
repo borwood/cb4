@@ -130,7 +130,7 @@ describe('applyChangeSets (operation semantics)', () => {
 
   it('composes dependent change sets in dependency order', async () => {
     const a = { id: 'CHG-210', title: 'a', intent: 'i', operations: [
-      { op: 'add_element', id: 'ent-queue', parent: 'ent-billing', name: 'queue', kind: 'datastore', title: 'Retry Queue' },
+      { op: 'add_element', summary: 'Test element.', id: 'ent-queue', parent: 'ent-billing', name: 'queue', kind: 'datastore', title: 'Retry Queue' },
     ] }
     const b = { id: 'CHG-211', title: 'b', intent: 'i', depends_on: ['CHG-210'], operations: [
       { op: 'add_relationship', id: 'rel-charges-queue', from: 'ent-charges', to: 'ent-queue', kind: 'writes_to' },
@@ -164,7 +164,7 @@ describe('applyChangeSets (operation semantics)', () => {
 
   it('AT-08: an invalid change set is rejected before anything is applied', async () => {
     const bad = { id: 'CHG-230', title: 't', intent: 'i', operations: [
-      { op: 'add_element', id: 'ent-ok', parent: 'ent-billing', name: 'ok', kind: 'component' },
+      { op: 'add_element', summary: 'Test element.', id: 'ent-ok', parent: 'ent-billing', name: 'ok', kind: 'component' },
       { op: 'add_relationship', id: 'rel-bad', from: 'ent-billing', to: 'ent-ok', kind: 'uses' }, // same hierarchy
     ] }
     const err = await apply([bad]).catch(e => e)

@@ -31,7 +31,7 @@ describe('validateChangeSet', () => {
 
   it('stable_id cannot be set or overwritten through metadata', () => {
     const r = validateChangeSet({ ...base, operations: [
-      { op: 'add_element', id: 'ent-x', parent: null, name: 'x', kind: 'system', metadata: { stable_id: 'ent-other' } },
+      { op: 'add_element', summary: 'Test element.', id: 'ent-x', parent: null, name: 'x', kind: 'system', metadata: { stable_id: 'ent-other' } },
       { op: 'update_element', id: 'ent-billing', set: { metadata: { stable_id: 'ent-other' } } },
     ] }, { registry, ledger })
     expect(r.issues.map(i => `${i.code}@${i.path}`)).toEqual(['E_RESERVED_METADATA@/operations/0/metadata/stable_id', 'E_RESERVED_METADATA@/operations/1/set/metadata/stable_id'])
@@ -49,7 +49,7 @@ describe('validateChangeSet', () => {
       ...base,
       operations: [
         { op: 'update_element', id: 'ent-nope', set: { title: 'x' } },
-        { op: 'add_element', id: 'ent-new', parent: 'ent-missing-parent', name: 'n', kind: 'spaceship' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-new', parent: 'ent-missing-parent', name: 'n', kind: 'spaceship' },
         { op: 'add_relationship', id: 'rel-new', from: 'ent-charges', to: 'ent-customer', kind: 'teleports_to' },
         { op: 'remove_relationship', id: 'ent-charges' },
       ],
@@ -67,7 +67,7 @@ describe('validateChangeSet', () => {
     const r = validateChangeSet({
       ...base,
       operations: [
-        { op: 'add_element', id: 'ent-worker', parent: 'ent-billing-api', name: 'retry_worker', kind: 'component' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-worker', parent: 'ent-billing-api', name: 'retry_worker', kind: 'component' },
         { op: 'add_relationship', id: 'rel-x', from: 'ent-billing-api', to: 'ent-worker', kind: 'publishes_to' },
         { op: 'add_relationship', id: 'rel-y', from: 'ent-billing', to: 'ent-charges', kind: 'uses' },
       ],
@@ -80,8 +80,8 @@ describe('validateChangeSet', () => {
     const r = validateChangeSet({
       ...base,
       operations: [
-        { op: 'add_element', id: 'ent-charges', parent: 'ent-billing', name: 'charges2', kind: 'component' },
-        { op: 'add_element', id: 'ent-dup', parent: 'ent-billing', name: 'invoice_ui', kind: 'container' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-charges', parent: 'ent-billing', name: 'charges2', kind: 'component' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-dup', parent: 'ent-billing', name: 'invoice_ui', kind: 'container' },
         { op: 'remove_element', id: 'ent-ledger-db' },
         { op: 'update_element', id: 'ent-ledger-db', set: { title: 'late' } },
         { op: 'remove_relationship', id: 'rel-charges-cards' },
@@ -117,12 +117,12 @@ describe('validateChangeSet', () => {
   })
 
   it('rejects LikeC4 keywords as element names, on add and on rename', () => {
-    const add = validateChangeSet({ ...base, operations: [{ op: 'add_element', id: 'ent-head', parent: 'ent-billing', name: 'head', kind: 'component' }] }, { registry, ledger })
+    const add = validateChangeSet({ ...base, operations: [{ op: 'add_element', summary: 'Test element.', id: 'ent-head', parent: 'ent-billing', name: 'head', kind: 'component' }] }, { registry, ledger })
     expect(add.ok).toBe(false)
     expect(add.issues).toContainEqual(expect.objectContaining({ code: 'E_RESERVED_WORD', path: '/operations/0/name' }))
     const rename = validateChangeSet({ ...base, operations: [{ op: 'move_element', id: 'ent-charges', parent: 'ent-billing-api', name: 'title' }] }, { registry, ledger })
     expect(codes(rename)).toEqual(['E_RESERVED_WORD'])
-    const fine = validateChangeSet({ ...base, operations: [{ op: 'add_element', id: 'ent-head', parent: 'ent-billing', name: 'head_field', kind: 'component' }] }, { registry, ledger })
+    const fine = validateChangeSet({ ...base, operations: [{ op: 'add_element', summary: 'Test element.', id: 'ent-head', parent: 'ent-billing', name: 'head_field', kind: 'component' }] }, { registry, ledger })
     expect(fine.ok).toBe(true)
   })
 
@@ -132,7 +132,7 @@ describe('validateChangeSet', () => {
     const sameName = validateChangeSet({
       ...base,
       operations: [
-        { op: 'add_element', id: 'ent-x', parent: 'ent-billing', name: 'charges', kind: 'component' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-x', parent: 'ent-billing', name: 'charges', kind: 'component' },
         { op: 'move_element', id: 'ent-charges', parent: 'ent-billing' },
       ],
     }, { registry, ledger })

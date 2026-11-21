@@ -6,6 +6,7 @@ import { IdentityRegistry, STABLE_ID_KEY } from './identity.js'
 import type { Ledger } from './ledger.js'
 import type { ParsedModelData } from './model.js'
 import { META, flagsOfTags, isReservedMetadataKey, isReservedTag, type StatusFlag } from './reserved.js'
+import { rawDescription, rawSummary, summaryOf } from './summary.js'
 
 export interface Snapshot {
   model: LikeC4Model
@@ -46,15 +47,17 @@ export function relationshipRow(s: Snapshot, r: { id: string; source: { id: stri
 }
 
 /**
- * Detail tiers shared by every read. minimal = ElementRow. medium = minimal plus description, technology,
- * tags and status. full = ElementDetail. Reads that list many entities take a Detail option and default
- * to minimal; reads about one entity return full.
+ * Detail tiers shared by every read. minimal = ElementRow. medium = minimal plus summary, technology,
+ * tags and status. full = ElementDetail (adds the description). Reads that list many entities take a
+ * Detail option; reads about one entity return full.
  */
 export type Detail = 'minimal' | 'medium'
 
-/** Medium detail: what an agent needs before relying on the entity. No relationships, children list or user metadata. */
+/** Medium detail: what an agent needs before relying on the entity. No description, relationships, children list or user metadata. */
 export interface ElementMedium extends ElementRow {
-  description: string | null
+  /** The stored summary, or the first sentence of the description when none is stored yet (then `summaryDerived` is true). */
+  summary: string | null
+  summaryDerived?: true
   technology: string | null
   tags: string[]
   /** Status metadata only (b4_status, b4_change, b4_pending); absent when the entity has none. Full detail carries these inside metadata instead. */
@@ -69,9 +72,11 @@ export function statusOf(el: ElementModel): Record<string, string | string[]> | 
 
 export function elementMedium(s: Snapshot, el: ElementModel): ElementMedium {
   const status = statusOf(el)
+  const summary = summaryOf(el)
   return {
     ...elementRow(s, el, true),
-    description: el.description?.text ?? null,
+    summary: summary?.text ?? null,
+    ...(summary?.derived ? { summaryDerived: true as const } : {}),
     technology: el.technology ?? null,
     tags: [...el.tags],
     ...(status ? { status } : {}),
@@ -112,6 +117,8 @@ export interface Overview {
   rootsTruncated: boolean
   ledger: { changeSets: number; byDisposition: Record<string, number>; promoted: number; open: string[]; openTruncated: boolean }
   identity: { withoutStableId: number }
+  /** Elements by summary: stored, derived on read from the description, or none at all (no description either). */
+  summaries: { stored: number; derived: number; none: number }
 }
 
 export function overview(s: Snapshot, opts: { maxRoots?: number; maxOpen?: number; detail?: Detail } = {}): Overview {
@@ -119,7 +126,12 @@ export function overview(s: Snapshot, opts: { maxRoots?: number; maxOpen?: numbe
   const maxOpen = opts.maxOpen ?? 10
   const kinds: Record<string, number> = {}
   let elements = 0
-  for (const el of s.model.elements()) { elements++; kinds[el.kind] = (kinds[el.kind] ?? 0) + 1 }
+  const summaries = { stored: 0, derived: 0, none: 0 }
+  for (const el of s.model.elements()) {
+    elements++; kinds[el.kind] = (kinds[el.kind] ?? 0) + 1
+    const sum = summaryOf(el)
+    summaries[!sum ? 'none' : sum.derived ? 'derived' : 'stored']++
+  }
   const spec = s.model.$data.specification as { relationships?: Record<string, unknown>; tags?: Record<string, unknown> }
   const roots = [...s.model.roots()]
   const byDisposition: Record<string, number> = {}
@@ -140,6 +152,7 @@ export function overview(s: Snapshot, opts: { maxRoots?: number; maxOpen?: numbe
     rootsTruncated: roots.length > maxRoots,
     ledger: { changeSets: s.ledger.records.size, byDisposition, promoted, open: open.slice(0, maxOpen), openTruncated: open.length > maxOpen },
     identity: { withoutStableId: s.registry.problems.filter(p => p.code === 'MISSING_STABLE_ID').length },
+    summaries,
   }
 }
 
@@ -149,6 +162,8 @@ export interface SearchOptions {
   tags?: string[]
   /** Keep only entities whose metadata has every key with that value (a list value matches when it contains it). */
   metadata?: Record<string, string>
+  /** Keep only descendants of this element (and relationships with an endpoint among them). */
+  under?: string
   limit?: number
   detail?: Detail
 }
@@ -165,41 +180,63 @@ function hasMetadata(md: Metadata, wanted: Record<string, string>): boolean {
   return Object.entries(wanted).every(([k, v]) => { const cur = md[k]; return Array.isArray(cur) ? cur.includes(v) : cur === v })
 }
 
-export function search(s: Snapshot, opts: SearchOptions): SearchResult {
+/**
+ * How well an element matches a lowercased query: 100 exact id or fqn, 80 fqn suffix or exact title,
+ * 50 a field starts with it, 20 a field contains it, 0 no match. An empty query matches everything at 1.
+ */
+export function matchScore(s: Snapshot, el: ElementModel, q: string): number {
+  if (!q) return 1
+  const sid = s.registry.elementByFqn(el.id)?.stableId ?? ''
+  if (sid.toLowerCase() === q || el.id.toLowerCase() === q) return 100
+  if (el.id.toLowerCase().endsWith('.' + q) || el.title.toLowerCase() === q) return 80
+  const md = el.getMetadata() as Metadata
+  const hay = [sid, el.id, el.title, el.kind, el.technology ?? '', rawSummary(el) ?? '', rawDescription(el) ?? '', ...el.tags, ...metadataText(md)].map(x => x.toLowerCase())
+  if (hay.some(h => h.startsWith(q))) return 50
+  if (hay.some(h => h.includes(q))) return 20
+  return 0
+}
+
+/** Ranked element matches and matching relationships, before any rendering. Null when `under` names no element. */
+export function searchMatches(s: Snapshot, opts: SearchOptions): { elements: ElementModel[]; relationships: RelationshipModel[]; total: number } | null {
   const q = opts.query.trim().toLowerCase()
-  const limit = Math.max(1, Math.min(opts.limit ?? 10, 50))
   const kinds = opts.kinds?.length ? new Set(opts.kinds) : null
   const tags = opts.tags?.length ? opts.tags : null
   const meta = opts.metadata && Object.keys(opts.metadata).length ? opts.metadata : null
+  let scope: ElementModel | null = null
+  if (opts.under) { scope = resolveElement(s, opts.under); if (!scope) return null }
+  const inScope = (el: ElementModel) => !scope || scope.isAncestorOf(el)
   const scored: { score: number; el: ElementModel }[] = []
   for (const el of s.model.elements()) {
+    if (!inScope(el)) continue
     if (kinds && !kinds.has(el.kind)) continue
     if (tags && !tags.every(t => el.isTagged(t))) continue
-    const md = el.getMetadata() as Metadata
-    if (meta && !hasMetadata(md, meta)) continue
-    const sid = s.registry.elementByFqn(el.id)?.stableId ?? ''
-    const hay = [sid, el.id, el.title, el.kind, el.technology ?? '', el.description?.text ?? '', ...el.tags, ...metadataText(md)].map(x => x.toLowerCase())
-    let score = 0
-    if (!q) score = 1
-    else if (sid.toLowerCase() === q || el.id.toLowerCase() === q) score = 100
-    else if (el.id.toLowerCase().endsWith('.' + q) || el.title.toLowerCase() === q) score = 80
-    else if (hay.some(h => h.startsWith(q))) score = 50
-    else if (hay.some(h => h.includes(q))) score = 20
+    if (meta && !hasMetadata(el.getMetadata() as Metadata, meta)) continue
+    const score = matchScore(s, el, q)
     if (score) scored.push({ score, el })
   }
   scored.sort((a, b) => b.score - a.score || a.el.id.localeCompare(b.el.id))
-  const relationships: RelationshipRow[] = []
+  const relationships: RelationshipModel[] = []
   if ((q || meta) && !kinds && !tags) {
     for (const r of s.model.relationships()) {
+      if (scope && !inScope(r.source) && !inScope(r.target)) continue
       const md = r.getMetadata() as Metadata
       if (meta && !hasMetadata(md, meta)) continue
       const sid = s.registry.relationshipByRelationId(r.id)?.stableId ?? ''
       const hay = [sid, r.title ?? '', r.technology ?? '', r.description?.text ?? '', ...metadataText(md)].map(x => x.toLowerCase())
-      if (!q || hay.some(h => h.includes(q))) relationships.push(relationshipRow(s, r))
-      if (relationships.length >= limit) break
+      if (!q || hay.some(h => h.includes(q))) relationships.push(r)
     }
   }
-  return { elements: scored.slice(0, limit).map(x => elementAt(s, x.el, opts.detail)), relationships, truncated: scored.length > limit }
+  return { elements: scored.map(x => x.el), relationships, total: scored.length }
+}
+
+export function search(s: Snapshot, opts: SearchOptions): SearchResult {
+  const limit = Math.max(1, Math.min(opts.limit ?? 10, 50))
+  const m = searchMatches(s, opts) ?? { elements: [], relationships: [], total: 0 }
+  return {
+    elements: m.elements.slice(0, limit).map(el => elementAt(s, el, opts.detail)),
+    relationships: m.relationships.slice(0, limit).map(r => relationshipRow(s, r)),
+    truncated: m.total > limit,
+  }
 }
 
 export interface ExpandOptions { entity: string; depth?: number; relationships?: 'direct' | 'none'; maxNodes?: number; detail?: Detail }
@@ -239,8 +276,10 @@ export function expand(s: Snapshot, opts: ExpandOptions): ExpandResult | null {
   }
 }
 
-/** Full detail: medium (status folded into metadata) plus parent, metadata, children, relationships, views and change sets. */
+/** Full detail: medium (status folded into metadata) plus description, parent, metadata, children, relationships, views and change sets. */
 export interface ElementDetail extends Omit<ElementMedium, 'children' | 'status'> {
+  /** The full description as written (null when there is none; never the summary standing in for it). */
+  description: string | null
   parent: string | null
   metadata: Record<string, string | string[]>
   children: ElementRow[]
@@ -296,6 +335,7 @@ export function elementDetail(s: Snapshot, entity: string): ElementDetail | null
   const nestedOut = [...el.outgoing('from-descendants')]
   return {
     ...medium,
+    description: rawDescription(el),
     parent: el.parent ? idOf(s, el.parent.id) : null,
     metadata: el.getMetadata() as Record<string, string | string[]>,
     children: [...el.children()].map(c => elementRow(s, c, true)),

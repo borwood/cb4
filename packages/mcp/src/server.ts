@@ -1,4 +1,4 @@
-// The agent-facing MCP server. Nineteen tools, one-line descriptions, compact JSON results, bounded
+// The agent-facing MCP server. Twenty-one tools, one-line descriptions, compact JSON results, bounded
 // defaults, help on demand. See help.ts for the documentation agents can pull in when they need it.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
@@ -7,7 +7,7 @@ import {
   storyOf, validateInContext, proposeChangeSet, setDisposition, promoteChangeSet, recordEvidence, reconcileBaseline,
   projectModel, renderProjection, qualifyBaseline, deriveVerification, initModelRepo, adoptExistingModel, loadModel,
   releaseTimeline, releasedBaseline,
-  overview, search, expand, elementDetail, resolveElement, locate,
+  overview, elementDetail, resolveElement, locate, budgetedExpand, budgetedSearch, outlineOverview, migrateSummaries,
   Ledger, ProjectionError, ProposalRejected, PromotionRefused, ReconcileRefused, LedgerError, EvidenceError,
   type StoryResult, type ValidationIssue, type Renderable, type RenderFormat,
 } from 'cb4-ledger'
@@ -15,12 +15,16 @@ import { RepoContext } from './context.js'
 import { help, HELP_TOPICS } from './help.js'
 
 export const SERVER_NAME = 'cb4'
-export const SERVER_VERSION = '0.3.0'
+export const SERVER_VERSION = '0.4.0'
 
 const short = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : null)
 
 function ok(head: string | null | undefined, data: object): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...data, head: short(head) }) }] }
+}
+/** An outline read: plain text whose first line names the read and the head. */
+function text(body: string): CallToolResult {
+  return { content: [{ type: 'text', text: body }] }
 }
 function fail(code: string, error: string, extra: Record<string, unknown> = {}): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: JSON.stringify({ ok: false, code, error, ...extra }) }] }
@@ -99,33 +103,48 @@ export function createServer(ctx: RepoContext): McpServer {
   }, async ({ topic }) => ({ content: [{ type: 'text', text: help(topic) }] }))
 
   const detailInput = z.enum(['minimal', 'medium']).optional()
+  const formatInput = z.enum(['outline', 'json']).optional()
+  const budgetInput = z.number().int().optional()
 
   server.registerTool('overview', {
-    description: 'Project summary: roots, counts, open change sets, head',
-    inputSchema: { detail: detailInput },
+    description: 'Project summary: roots, counts, summary coverage, open change sets, head (outline; format=json)',
+    inputSchema: { detail: detailInput, format: formatInput },
   }, async (a) => guarded(async () => {
     const s = await ctx.snapshot()
     if (!(await ctx.hasModel())) {
       return ok(s.head, { ...overview(s), initialized: false, next: 'no model repository here yet: bootstrap mode=init name=<project> creates one (help adopt), or mode=adopt if model/ already holds LikeC4 sources' })
     }
-    return ok(s.head, overview(s, { detail: a.detail }))
+    const o = overview(s, { detail: a.detail ?? 'medium' })
+    return a.format === 'json' ? ok(s.head, o) : text(outlineOverview(o, short(s.head)))
   }))
 
   server.registerTool('search', {
-    description: 'Find elements by id, fqn, title, kind, technology, description, tag or metadata (ranked, limit<=50)',
-    inputSchema: { query: z.string(), kinds: z.array(z.string()).optional(), tags: z.array(z.string()).optional(), metadata: z.record(z.string(), z.string()).optional(), limit: z.number().int().optional(), detail: detailInput },
+    description: 'Find elements by id, title, kind, technology, summary, description, tag or metadata, ranked; under= scopes',
+    inputSchema: {
+      query: z.string(), under: z.string().optional(), kinds: z.array(z.string()).optional(), tags: z.array(z.string()).optional(),
+      metadata: z.record(z.string(), z.string()).optional(), limit: z.number().int().optional(), detail: detailInput, budget: budgetInput, format: formatInput,
+    },
   }, async (a) => guarded(async () => {
     const s = await ctx.snapshot()
-    return ok(s.head, search(s, a))
+    const r = budgetedSearch(s, { ...a, head: short(s.head) })
+    if (!r) return fail('NOT_FOUND', `no element ${a.under} at HEAD`, { hint: 'help ids' })
+    return a.format === 'json' ? ok(s.head, r.data) : text(r.text)
   }))
 
   server.registerTool('expand', {
-    description: 'Descendants of an entity plus relationships touching them (depth<=5); detail=medium adds descriptions',
-    inputSchema: { entity: z.string(), depth: z.number().int().optional(), relationships: z.enum(['direct', 'none']).optional(), max_nodes: z.number().int().optional(), detail: detailInput },
+    description: 'An entity and its descendants within a char budget; detail falls off with depth; focus_terms keeps matches',
+    inputSchema: {
+      entity: z.string(), depth: z.number().int().optional(), focus_terms: z.array(z.string()).optional(),
+      relationships: z.enum(['bundled', 'direct', 'none']).optional(), max_nodes: z.number().int().optional(), detail: detailInput, budget: budgetInput, format: formatInput,
+    },
   }, async (a) => guarded(async () => {
     const s = await ctx.snapshot()
-    const r = expand(s, { entity: a.entity, depth: a.depth, relationships: a.relationships, maxNodes: a.max_nodes, detail: a.detail })
-    return r ? ok(s.head, r) : fail('NOT_FOUND', `no element ${a.entity} at HEAD`, { hint: 'help ids; story still works for removed entities' })
+    const r = budgetedExpand(s, {
+      entity: a.entity, depth: a.depth, focusTerms: a.focus_terms, relationships: a.relationships === 'none' ? 'none' : 'bundled',
+      maxNodes: a.max_nodes, detail: a.detail, budget: a.budget, format: a.format, head: short(s.head),
+    })
+    if (!r) return fail('NOT_FOUND', `no element ${a.entity} at HEAD`, { hint: 'help ids; story still works for removed entities' })
+    return a.format === 'json' ? ok(s.head, r.data) : text(r.text)
   }))
 
   server.registerTool('element', {
@@ -142,12 +161,13 @@ export function createServer(ctx: RepoContext): McpServer {
   }))
 
   server.registerTool('locate', {
-    description: 'Ground around an entity: full detail, related entities, then each container up to the root with its peers',
-    inputSchema: { entity: z.string(), max_peers: z.number().int().optional(), max_relationships: z.number().int().optional() },
+    description: 'Ground around an entity within a char budget: it in full, related entities, each container to the root with peers',
+    inputSchema: { entity: z.string(), max_peers: z.number().int().optional(), max_relationships: z.number().int().optional(), budget: budgetInput, format: formatInput },
   }, async (a) => guarded(async () => {
     const s = await ctx.snapshot()
-    const r = locate(s, { entity: a.entity, maxPeers: a.max_peers, maxRelationships: a.max_relationships })
-    return r ? ok(s.head, r) : fail('NOT_FOUND', `no element or relationship ${a.entity} at HEAD`, { hint: 'help ids' })
+    const r = locate(s, { entity: a.entity, maxPeers: a.max_peers, maxRelationships: a.max_relationships, budget: a.budget, format: a.format, head: short(s.head) })
+    if (!r) return fail('NOT_FOUND', `no element or relationship ${a.entity} at HEAD`, { hint: 'help ids' })
+    return a.format === 'json' ? ok(s.head, r.data) : text(r.text)
   }))
 
   server.registerTool('story', {
@@ -349,6 +369,19 @@ export function createServer(ctx: RepoContext): McpServer {
       deployed: r.deployedChangeSets, failed: r.failedChangeSets, model: summary, ...(r.warnings.length ? { warnings: r.warnings } : {}),
     })
   }))
+
+  server.registerTool('migrate', {
+    description: 'Store derived element summaries as one editorial change set (wording only, statuses untouched)',
+    inputSchema: { what: z.enum(['summaries']), dry_run: z.boolean().optional(), actor: z.string().optional(), expected_head: z.string().optional() },
+  }, async (a) => guarded(() => ctx.withWriteLock(async () => {
+    const actor = needActor(a.actor)
+    const r = await migrateSummaries(ctx.repoDir, { actor, dryRun: a.dry_run, expectedHead: await resolveExpected(ctx, a.expected_head) })
+    return ok(r.head, {
+      what: a.what, change: r.changeId, stored: a.dry_run ? 0 : r.operations.length,
+      ...(a.dry_run ? { would_store: r.operations.map(o => ({ id: o.id, summary: (o as { set: { summary?: string } }).set.summary })) } : {}),
+      skipped: { no_description: r.skipped.noDescription.length, without_stable_id: r.skipped.withoutStableId.length },
+    })
+  })))
 
   server.registerTool('bootstrap', {
     description: 'Adopt a system: init an empty model repo, or adopt an existing LikeC4 model as inferred baseline (help adopt)',

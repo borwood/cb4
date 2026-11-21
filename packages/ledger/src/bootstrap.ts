@@ -10,6 +10,7 @@ import { loadModel, modelFromParsedData, MODEL_DIR, type ParsedModelData } from 
 import { STATUS_FLAGS, TAG, TAG_COLOR, isReservedMetadataKey, userTags } from './reserved.js'
 import type { ChangeSet, Operation } from './schema.js'
 import { finalizeBaseline } from './status.js'
+import { firstSentence, rawDescription, rawSummary } from './summary.js'
 import { generateViews } from './views.js'
 import { generateAndCheck, readWorkspace, sameWorkspace, summarizeErrors, writeWorkspace, MODEL_FILE, VIEWS_FILE } from './workspace.js'
 
@@ -123,7 +124,11 @@ export async function adoptExistingModel(dir: string, opts: AdoptOptions): Promi
       name: lastSegment(fqn), kind: rec.kind, title: el.title,
     }
     if (el.technology) op.technology = el.technology
-    if (el.description?.text) op.description = el.description.text
+    // Raw fields: LikeC4's getters fall back from one to the other. An element adopted without a
+    // summary gets the first sentence of its description, so adopted change sets meet the summary rule.
+    const summary = rawSummary(el), description = rawDescription(el)
+    if (summary ?? description) op.summary = summary ?? firstSentence(description!)
+    if (description) op.description = description
     const tags = userTags(el.tags)
     if (tags.length) op.tags = tags
     const md = Object.fromEntries(Object.entries(el.getMetadata() as Record<string, string | string[]>).filter(([k, v]) => k !== STABLE_ID_KEY && !isReservedMetadataKey(k) && (typeof v === 'string' || Array.isArray(v))))

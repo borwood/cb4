@@ -78,7 +78,7 @@ export function planPromotion(cs: ChangeSet, verification: Verification, intende
   const addedHere = new Set<string>()
   for (const op of cs.operations) {
     if (op.op.startsWith('add_')) addedHere.add(op.id)
-    const defer = isDeferrable(op) && !cs.inferred && !addedHere.has(op.id) && !intended.has(op.id) && targetVerification(verification, op.id) !== 'verified'
+    const defer = isDeferrable(op) && !cs.inferred && !cs.editorial && !addedHere.has(op.id) && !intended.has(op.id) && targetVerification(verification, op.id) !== 'verified'
     ;(defer ? plan.deferred : plan.immediate).push(op)
   }
   return plan
@@ -194,7 +194,8 @@ interface OpEvent { rec: ChangeRecord; op: Operation }
 function promotedRecords(ledger: Ledger, opts: HistoryOptions): ChangeRecord[] {
   return ledger.all()
     .map(rec => (opts.promoting && rec.changeSet.id === opts.promoting.id ? { ...rec, changeSet: opts.promoting } : rec))
-    .filter(rec => !!rec.changeSet.promotion)
+    // Editorial change sets change wording only: they prove nothing exists and are never an entity's latest change.
+    .filter(rec => !!rec.changeSet.promotion && !rec.changeSet.editorial)
 }
 
 /** Promoted operations per entity, in recorded chronology. */

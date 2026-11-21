@@ -65,6 +65,28 @@ An entity absent from the model (removed, or proposed but not yet promoted) stil
 Lineage recorded with `derived_from` and `succeeded_by` (splits, merges, replacements) shows up
 one hop in stories and is never an architectural edge.
 
+## Budgeted reads
+
+```ts
+import { budgetedExpand, budgetedSearch, locate, outlineOverview, overview } from 'cb4-ledger'
+
+const snapshot = { model, parsedData, registry, ledger, head: null }   // from loadModel + Ledger.load
+budgetedExpand(snapshot, { entity: 'ent-billing', depth: 2, focusTerms: ['retry'], budget: 20_000 })
+budgetedSearch(snapshot, { query: 'worker', under: 'ent-billing' })
+locate(snapshot, { entity: 'ent-billing-api', format: 'json' })       // each returns { text, data }
+outlineOverview(overview(snapshot), null)
+```
+
+The list reads take a character `budget` (default 40,000) and return the most useful view that
+fits, as an outline (`text`) and as data. Detail falls off with distance from the entity asked
+about; everything cut is counted, and the outline names the call that brings it back. A smaller
+budget never shows more.
+
+**Summaries** are LikeC4's native one-line `summary`. List reads show it instead of the
+description; an element without one shows its description's first sentence, flagged
+`summaryDerived`, and reads never write it back. `migrateSummaries(repoDir, { actor, dryRun })`
+stores the derived ones as a single editorial change set that changes no status.
+
 ## Change sets
 
 ```ts
@@ -83,6 +105,9 @@ included); names that are LikeC4 keywords (`E_RESERVED_WORD`: the DSL cannot quo
 generated model would not parse); use after remove; moves into self or a descendant; LikeC4's rule
 that a relationship cannot connect an element with its own ancestor or descendant; dependency
 existence and cycles. Warnings cover empty change sets and references that duplicate an operation.
+With `authoring: true` (what proposing uses), a new element must carry a one-line `summary`
+(`E_MISSING_SUMMARY`) and a summary cannot be removed; records already in the ledger are not
+held to this.
 `validateInContext` first projects the change set's unpromoted dependencies (transitively) onto the
 baseline, so related change sets can be proposed before any is promoted; its result lists the
 `projected` ids, and warns (`W_DEPENDENCY_NOT_PROJECTED`) when they do not apply cleanly.

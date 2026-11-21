@@ -9,7 +9,7 @@ import { makeRepo, type Fixture } from './fixture.js'
 const cs = ChangeSet.parse({
   id: 'CHG-042', title: 'Add asynchronous billing retries', intent: 'i',
   operations: [
-    { op: 'add_element', id: 'ent-billing-retry-worker', parent: 'ent-billing', name: 'retry_worker', kind: 'component' },
+    { op: 'add_element', summary: 'Test element.', id: 'ent-billing-retry-worker', parent: 'ent-billing', name: 'retry_worker', kind: 'component' },
     { op: 'add_relationship', id: 'rel-billing-api-publishes-retries', from: 'ent-billing-api', to: 'ent-billing-retry-worker', kind: 'publishes_to' },
   ],
   references: [{ entity: 'ent-invoice-ui', relation: 'relates_to' }],

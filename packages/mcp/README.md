@@ -24,7 +24,7 @@ npx -y cb4-mcp skill --codex    # -> .agents/skills/...
 Any other MCP client, over stdio:
 
 ```json
-{ "mcpServers": { "cb4": { "command": "npx", "args": ["-y", "cb4", "/abs/path/architecture", "--actor", "my-agent"] } } }
+{ "mcpServers": { "cb4": { "command": "npx", "args": ["-y", "cb4-mcp", "/abs/path/architecture", "--actor", "my-agent"] } } }
 ```
 
 The path is the model repository. It does not need to exist yet: the `bootstrap` tool creates it
@@ -76,11 +76,11 @@ were installed with.
 | Tool | Purpose |
 |---|---|
 | help | documentation by topic (start, ids, schema, operations, evidence, status, workflow, plan, concurrency, queries, policy, errors, adopt) |
-| overview | roots, counts, open change sets, head; says so when the repository is not initialised yet. `detail=medium` adds descriptions |
-| search | ranked element lookup by id, fqn, title, kind, technology, description, tag or metadata; filter by metadata key=value. `detail=medium` adds descriptions |
-| expand | descendants of an entity plus the relationships touching them. `detail=medium` adds descriptions |
+| overview | roots with their summaries, counts (including how many summaries are stored or derived), open change sets, head; says so when the repository is not initialised yet |
+| search | ranked element lookup by id, fqn, title, kind, technology, summary, description, tag or metadata; `under=<id>` scopes it to a subtree; filter by metadata key=value |
+| expand | an entity and its descendants within a character budget, relationships bundled at the edge of what is shown; `focus_terms` keeps the entities you name in full |
 | element | one element in full, its own relationships split from those its descendants carry; `qualify=true` adds derived verification |
-| locate | ground around an entity in one call: full detail, related entities, then each container up to the root with connected and other peers |
+| locate | ground around an entity in one call, within a character budget: full detail, related entities, then each container up to the root with connected and other peers |
 | story | change sets involving an entity or subtree, oldest first, paged; as of a revision or date |
 | changes | list change sets by disposition, promotion, entity, or source ref (change-set sources and evidence) |
 | change | one change set with commits, derived verification, and optionally its evidence |
@@ -90,6 +90,7 @@ were installed with.
 | promote | apply an accepted change set to the baseline, marking unverified parts as intended; the only write into `model/` |
 | record_evidence | append an evidence record; verification follows from it, and the model is reconciled |
 | reconcile | apply verified deferred operations and refresh status tags; idempotent |
+| migrate | `what=summaries`: store the summaries reads derive for older elements as one editorial change set (wording only, statuses untouched); `dry_run` lists them |
 | project | candidate projection of change sets, optionally rendered as DSL, HTML or PNG |
 | qualify | the committed baseline annotated per entity with derived verification |
 | render | the committed baseline for people: interactive HTML site (default), PNG, or DSL |
@@ -104,7 +105,7 @@ Reserved tags say so on every entity: `b4-intended` (does not exist yet; exclude
 views), `b4-retiring` (still exists; removal awaits verification), `b4-pending-update` (current
 values shown; Target views carry the intended ones), `b4-pending-move`, `b4-failed`. Metadata
 `b4_change`, `b4_status` and `b4_pending` give the change set, its verification for that entity,
-and any deferred operations. Rows returned by `search`, `expand` and `element` carry
+and any deferred operations. Rows returned by `search`, `expand`, `element` and `locate` carry
 `pending: [...]` whenever an entity is not exactly as shown. Inferred change sets, which describe
 what was observed during adoption, apply at once without flags, and so does any operation on an
 entity that is itself still intended: revising or dropping a plan replaces the plan rather than
@@ -119,10 +120,19 @@ per tag. `render` builds the interactive single-file site; that is the format me
 
 - **One-line descriptions, help on demand.** The whole tool list is under 14 KB. Anything an
   agent might need to follow up on is behind `help topic=<name>`.
-- **Compact JSON**: no whitespace, short shas, string-encoded roles (`ent-x:added`), summary modes
-  by default (`story detail=summary`, `qualify detail=counts`), full detail a flag away.
-- **Bounded by default**: overview shows at most 20 roots and 10 open change sets; search limit
-  10; expand depth 1 and 50 nodes; story 20 entries with a cursor. Every list says `truncated`.
+- **Outline for browsing, compact JSON for the rest**: overview, search, expand and locate answer
+  in an indented outline (one line per entity, summary below it; `format=json` for the same content
+  as JSON). Other tools return JSON with no whitespace, short shas, string-encoded roles
+  (`ent-x:added`), summary modes by default (`story detail=summary`, `qualify detail=counts`),
+  full detail a flag away.
+- **Budgeted reads**: search, expand and locate take `budget=<chars>` (default 40,000) and return
+  the most useful view that fits. Detail falls off with distance from the entity: descriptions
+  first, then edge lists, then summaries, then whole rows, each cut counted with the call that
+  brings it back.
+  overview shows at most 20 roots and 10 open change sets; story 20 entries with a cursor.
+- **Summaries**: `add_element` requires a one-line `summary` (LikeC4's own property). List reads
+  show it in place of the description. Elements recorded before the rule show the first sentence
+  of their description, marked derived; reads never write it back.
 - **Operational feedback on every call**: `head` (short sha the answer was computed at), `ok`,
   and on failure a `code` (`VALIDATION`, `NOT_FOUND`, `REPO_MOVED`, `LOCK_BUSY`, `REFUSED`,
   `PROJECTION`, `INVALID_MODEL`) with `issues[]` carrying JSON-pointer paths into the input.
@@ -147,7 +157,7 @@ Several agents may use one repository at once, through one or several server pro
 ## Library use
 
 ```ts
-import { createServer, RepoContext } from 'cb4'
+import { createServer, RepoContext } from 'cb4-mcp'
 
 const server = createServer(new RepoContext('/abs/path/architecture', { actor: 'ci' }))
 await server.connect(transport)   // any MCP server transport

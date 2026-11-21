@@ -41,7 +41,7 @@ describe('propose', () => {
     const r = await proposeChangeSet(fx.dir, {
       id: 'CHG-052', title: 'Cache invoices', intent: 'Serve invoice reads from a cache',
       sources: [{ ref: 'REQ-300', role: 'requirement' }],
-      operations: [{ op: 'add_element', id: 'ent-invoice-cache', parent: 'ent-billing', name: 'invoice_cache', kind: 'datastore', title: 'Invoice Cache' }],
+      operations: [{ op: 'add_element', summary: 'Test element.', id: 'ent-invoice-cache', parent: 'ent-billing', name: 'invoice_cache', kind: 'datastore', title: 'Invoice Cache' }],
     }, { actor, expectedBaseRevision: head!, date: '2026-04-02T10:00:00Z' })
     expect(r.revised).toBe(false)
     expect(r.changeSet.disposition).toBe('proposed')
@@ -53,7 +53,7 @@ describe('propose', () => {
       id: 'CHG-052', title: 'Cache invoices', intent: 'Serve invoice reads from a cache',
       sources: [{ ref: 'REQ-300', role: 'requirement' }],
       operations: [
-        { op: 'add_element', id: 'ent-invoice-cache', parent: 'ent-billing', name: 'invoice_cache', kind: 'datastore', title: 'Invoice Cache', technology: 'Redis' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-invoice-cache', parent: 'ent-billing', name: 'invoice_cache', kind: 'datastore', title: 'Invoice Cache', technology: 'Redis' },
         { op: 'add_relationship', id: 'rel-ui-reads-cache', from: 'ent-invoice-ui', to: 'ent-invoice-cache', kind: 'uses' },
       ],
     }, { actor, date: '2026-04-03T10:00:00Z' })

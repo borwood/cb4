@@ -5,6 +5,7 @@ import { ChangeSet, normalizeChangeSetInput, type ChangeSet as ChangeSetT } from
 import { IdentityRegistry, STABLE_ID_KEY } from './identity.js'
 import type { Ledger } from './ledger.js'
 import { DEPRECATED_CHANGE_SET_FIELDS, TAG, isLikeC4ReservedWord, isReservedMetadataKey, isReservedTag } from './reserved.js'
+import { SUMMARY_MAX } from './summary.js'
 
 export interface ValidationIssue {
   severity: 'error' | 'warning'
@@ -19,6 +20,12 @@ export interface ValidationContext {
   registry?: IdentityRegistry
   /** Ledger for dependency checks. */
   ledger?: Ledger
+  /**
+   * Authoring rules for a new or revised proposal (propose, validate): every added element carries a
+   * summary. Off when re-checking recorded change sets (projection, promotion), so change sets
+   * recorded before the rule still apply.
+   */
+  authoring?: boolean
 }
 
 export interface ValidationResult {
@@ -42,6 +49,15 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
     return { ok: false, issues }
   }
   const cs = parsed.data
+
+  if (cs.editorial) {
+    if (cs.inferred) err('E_EDITORIAL_SCOPE', '/inferred', 'an editorial change set changes wording only; it cannot also be inferred')
+    cs.operations.forEach((op, i) => {
+      if (op.op !== 'update_element' || Object.keys(op.set).some(k => k !== 'summary')) {
+        err('E_EDITORIAL_SCOPE', `/operations/${i}`, 'an editorial change set may only set element summaries (update_element with set.summary); anything else is an architectural change')
+      }
+    })
+  }
 
   if (cs.operations.length === 0 && cs.references.length === 0) {
     warn('W_NO_PARTICIPANTS', '/', 'change set has no operations and no references; it will not appear in any story')
@@ -95,6 +111,17 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
     if (r && reg.model.element(r.fqn).isTagged(TAG.retiring)) warn('W_RETIRING_TARGET', path, `${what} ${id} is retiring: its removal is promoted and awaits verification`)
   }
 
+  /** Summaries: required on new elements, never deleted, one short line (authoring only). */
+  const checkSummary = (summary: string | null | undefined, path: string, adding: boolean) => {
+    if (!ctx.authoring) return
+    if (summary === null) { err('E_SUMMARY_REQUIRED', path, 'an element summary cannot be removed; set a new one instead'); return }
+    if (summary === undefined || !summary.trim()) {
+      if (adding) err('E_MISSING_SUMMARY', path, `add_element needs a summary: one line, at most ${SUMMARY_MAX} characters, saying what the element is (list reads show it instead of the description)`)
+      return
+    }
+    if (/\n/.test(summary.trim()) || summary.trim().length > SUMMARY_MAX) warn('W_LONG_SUMMARY', path, `a summary is one line of at most ${SUMMARY_MAX} characters; put the rest in the description (list reads cut it there)`)
+  }
+
   // Virtual state while walking operations in order.
   const added = new Map<string, VirtualElement>()
   const addedRels = new Map<string, { from: string; to: string }>()
@@ -140,6 +167,7 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
         checkName(op.name, `${p}/name`)
         checkTags(op.tags, `${p}/tags`)
         checkMetadata(op.metadata, `${p}/metadata`)
+        checkSummary(op.summary, `${p}/summary`, true)
         let parentFqn: string | null = null
         if (op.parent !== null) {
           if (requireElement(op.parent, `${p}/parent`, 'parent')) { parentFqn = elementFqn(op.parent)!; warnIfRetiring(op.parent, `${p}/parent`, 'parent') }
@@ -159,6 +187,10 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
         if (Object.keys(op.set).length === 0) warn('W_EMPTY_UPDATE', `${p}/set`, 'update has no fields')
         checkTags(op.set.tags, `${p}/set/tags`)
         checkMetadata(op.set.metadata, `${p}/set/metadata`)
+        checkSummary(op.set.summary, `${p}/set/summary`, false)
+        if (ctx.authoring && op.set.description !== undefined && op.set.summary === undefined) {
+          warn('W_SUMMARY_STALE', `${p}/set`, 'the description changes but the summary does not; check it still holds, or set summary too')
+        }
         break
       }
       case 'move_element': {

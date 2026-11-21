@@ -112,10 +112,17 @@ or `revision=<sha>` to see the story as it was known then.
 
 ## Designed for agents
 
-- **Nineteen tools, one-line descriptions, under 14 KB.** Everything else is behind
+- **Twenty-one tools, one-line descriptions, under 14 KB.** Everything else is behind
   `help topic=<name>`, fetched only when needed.
-- **Bounded by default.** Overview shows at most 20 roots; expand is depth 1 and 50 nodes; stories
-  page with a cursor. Every list says whether it was truncated.
+- **Reads fit a budget.** Search, expand and locate take a character budget (40,000 by default)
+  and return the most useful view that fits: detail falls off with distance from the entity you
+  asked about, relationships are bundled at the edge of what is shown, and everything left out is
+  counted with the call that brings it back. `focus_terms` keeps the entities you name in full. Stories page
+  with a cursor.
+- **Outline, not JSON, for browsing.** Overview, search, expand and locate answer in an indented
+  outline, one line per entity; `format=json` gives the same content as JSON.
+- **Summaries.** Every new element carries a one-line `summary`; list reads show it instead of the
+  description, which stays one `element` call away.
 - **Compact responses** with string-encoded roles and summary modes, full detail a flag away.
 - **Safe for several agents at once.** Every response carries `head`; writes accept
   `expected_head` and refuse to proceed on a moved repository, behind a cross-process lock.
@@ -144,7 +151,8 @@ sources:
 depends_on: [CHG-037]
 operations:
   - { op: add_element, id: ent-billing-retry-worker, parent: ent-billing, name: retry_worker,
-      kind: component, title: Billing Retry Worker, technology: Node.js worker }
+      kind: component, title: Billing Retry Worker, technology: Node.js worker,
+      summary: Retries failed card charges off the request path. }
   - { op: add_relationship, id: rel-billing-api-publishes-retries, from: ent-billing-api,
       to: ent-billing-retry-worker, kind: publishes_to, title: enqueues retries }
 references:

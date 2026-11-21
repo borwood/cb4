@@ -19,7 +19,7 @@ let clock = 0
 const when = () => new Date(Date.UTC(2026, 7, 1, 10, 0, 0) + clock++ * 60_000).toISOString()
 const context = async () => ({ loaded: await loadModel(fx.dir), ledger: await Ledger.load(fx.dir) })
 const codes = (issues: { code: string }[]) => issues.map(i => i.code)
-const add = (id: string, name: string, parent = 'ent-billing') => ({ op: 'add_element', id, parent, name, kind: 'component', title: name })
+const add = (id: string, name: string, parent = 'ent-billing') => ({ op: 'add_element', summary: 'Test element.', id, parent, name, kind: 'component', title: name })
 
 describe('validation sees unpromoted dependencies', () => {
   it('a change set may build on entities introduced by a proposed dependency', async () => {

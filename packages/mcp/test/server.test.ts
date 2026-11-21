@@ -48,10 +48,10 @@ beforeAll(async () => {
 afterAll(async () => { await client.close(); await rm(dir, { recursive: true, force: true }) })
 
 describe('surface', () => {
-  it('exposes 20 tools with a small token footprint, and help on demand', async () => {
+  it('exposes 21 tools with a small token footprint, and help on demand', async () => {
     const tools = (await client.listTools()).tools
     expect(tools.map(t => t.name).sort()).toEqual([
-      'bootstrap', 'change', 'changes', 'element', 'expand', 'help', 'locate', 'overview', 'project', 'promote', 'propose', 'qualify', 'reconcile', 'record_evidence', 'releases', 'render', 'search', 'set_disposition', 'story', 'validate',
+      'bootstrap', 'change', 'changes', 'element', 'expand', 'help', 'locate', 'migrate', 'overview', 'project', 'promote', 'propose', 'qualify', 'reconcile', 'record_evidence', 'releases', 'render', 'search', 'set_disposition', 'story', 'validate',
     ])
     const bytes = JSON.stringify(tools).length
     expect(bytes).toBeLessThan(14_000) // roughly 3.5k tokens for the whole tool list
@@ -67,8 +67,8 @@ describe('surface', () => {
     expect(status.text).toMatch(/b4-intended/)
   })
 
-  it('overview is bounded and carries head', async () => {
-    const r = await call(client, 'overview')
+  it('overview is bounded and carries head; outline by default, json on request', async () => {
+    const r = await call(client, 'overview', { format: 'json' })
     expect(r.isError).toBe(false)
     expect(r.json.ok).toBe(true)
     expect(r.json.head).toMatch(/^[0-9a-f]{7}$/)
@@ -76,26 +76,44 @@ describe('surface', () => {
     expect(r.json.model.elements).toBe(7)
     expect(r.json.ledger).toMatchObject({ changeSets: 3, promoted: 1, open: ['CHG-042'] })
     expect(r.json.identity.withoutStableId).toBe(0)
-    expect(JSON.stringify(r.json).length).toBeLessThan(1500)
+    // Summaries: none stored in the example; one derived from a description, six with neither.
+    expect(r.json.summaries).toEqual({ stored: 0, derived: 1, none: 6 })
+    expect(r.json.roots[0]).toMatchObject({ id: 'ent-customer', summary: 'Pays invoices', summaryDerived: true })
+    expect(JSON.stringify(r.json).length).toBeLessThan(2000)
+
+    const o = await call(client, 'overview')
+    expect(o.json).toBeNull()
+    expect(o.text).toMatch(/^# overview · 7 elements, 4 relationships, \d+ views · head [0-9a-f]{7}\n/)
+    expect(o.text).toContain('- ent-customer: Customer [actor] customer')
+    expect(o.text).toContain('  summary (derived): Pays invoices')
+    expect(o.text).toMatch(/summaries: 0 stored, 1 derived/)
+    expect(o.text.length).toBeLessThan(1500)
   })
 
   it('search, expand, element are compact and resolve both ids and fqns', async () => {
-    const s = await call(client, 'search', { query: 'billing', limit: 3 })
+    const json = { format: 'json' }
+    const s = await call(client, 'search', { query: 'billing', limit: 3, ...json })
     expect(s.json.elements[0]).toMatchObject({ id: 'ent-billing', fqn: 'billing' })
-    expect(s.json.truncated).toBe(true)
+    expect(s.json.more.elements).toBeGreaterThan(0)
     // Technology and description are searchable text too.
-    expect((await call(client, 'search', { query: 'postgres' })).json.elements.map((e: any) => e.id)).toEqual(['ent-ledger-db'])
-    expect((await call(client, 'search', { query: 'pays invoices' })).json.elements.map((e: any) => e.id)).toEqual(['ent-customer'])
+    const ids = async (args: Record<string, unknown>) => (await call(client, 'search', { ...args, ...json })).json.elements.map((e: any) => e.id)
+    expect(await ids({ query: 'postgres' })).toEqual(['ent-ledger-db'])
+    expect(await ids({ query: 'pays invoices' })).toEqual(['ent-customer'])
     // Metadata is searchable as text and as a filter.
-    expect((await call(client, 'search', { query: 'payments-team' })).json.elements.map((e: any) => e.id)).toEqual(['ent-billing'])
-    const owned = await call(client, 'search', { query: '', metadata: { owner: 'payments-team' } })
-    expect(owned.json.elements.map((e: any) => e.id)).toEqual(['ent-billing'])
-    expect((await call(client, 'search', { query: '', metadata: { owner: 'nobody' } })).json.elements).toEqual([])
+    expect(await ids({ query: 'payments-team' })).toEqual(['ent-billing'])
+    expect(await ids({ query: '', metadata: { owner: 'payments-team' } })).toEqual(['ent-billing'])
+    expect(await ids({ query: '', metadata: { owner: 'nobody' } })).toEqual([])
+    // under= scopes the search to a subtree.
+    expect(await ids({ query: 'charges', under: 'ent-billing-api' })).toEqual(['ent-charges'])
+    expect(await ids({ query: 'charges', under: 'ent-invoice-ui' })).toEqual([])
+    expect(await ids({ query: '', under: 'ent-billing-api' })).toEqual(['ent-charges'])
+    expect((await call(client, 'search', { query: 'x', under: 'ent-nope' })).json.code).toBe('NOT_FOUND')
 
-    const e = await call(client, 'expand', { entity: 'billing', depth: 2 })
+    const e = await call(client, 'expand', { entity: 'billing', depth: 2, ...json })
     expect(e.json.entity.id).toBe('ent-billing')
     expect(e.json.descendants.map((d: any) => `${d.id}@${d.depth}`)).toEqual(['ent-invoice-ui@1', 'ent-billing-api@1', 'ent-charges@2', 'ent-ledger-db@1'])
     expect(e.json.relationships.map((r: any) => r.id).sort()).toEqual(['rel-charges-cards', 'rel-charges-persist-ledger-db', 'rel-customer-views-invoices', 'rel-invoice-ui-calls-billing-api'])
+    expect(e.json).toMatchObject({ bundles: [], elided: [], hiddenRelationships: 0, truncated: false })
 
     const d = await call(client, 'element', { entity: 'ent-charges', qualify: true })
     expect(d.json).toMatchObject({ id: 'ent-charges', fqn: 'billing.billing_api.charges', parent: 'ent-billing-api' })
@@ -103,6 +121,8 @@ describe('surface', () => {
     expect((await call(client, 'element', { entity: 'ent-billing-api' })).json.changeSets.open).toEqual(['CHG-042'])
     expect(d.json.outgoing.map((r: any) => r.to).sort()).toEqual(['ent-ledger-db', 'ent-payment-gateway'])
     expect(d.json).toMatchObject({ nestedIncoming: [], nestedOutgoing: [], nestedTruncated: false })
+    // Full detail carries the description as written and the summary list reads show.
+    expect((await call(client, 'element', { entity: 'ent-customer' })).json).toMatchObject({ summary: 'Pays invoices', summaryDerived: true, description: 'Pays invoices' })
 
     // A container's own edges are split from those its descendants carry, and via says which descendant.
     const api = await call(client, 'element', { entity: 'ent-billing-api' })
@@ -117,19 +137,46 @@ describe('surface', () => {
     expect(sys.json.nestedIncoming.map((r: any) => [r.id, r.via.id])).toEqual([['rel-customer-views-invoices', 'ent-invoice-ui']])
     expect(sys.json.nestedOutgoing.map((r: any) => r.id)).toEqual(['rel-charges-cards']) // internal edges are in neither list
 
-    // detail=medium on the list reads: the same medium template everywhere, minimal by default.
-    const min = await call(client, 'search', { query: 'billing api' })
+    // Detail tiers: medium by default on the list reads (summary, never the description); minimal on request.
+    const min = await call(client, 'search', { query: 'billing api', detail: 'minimal', ...json })
     expect(Object.keys(min.json.elements[0]).sort()).toEqual(['children', 'fqn', 'id', 'kind', 'title'])
-    const med = await call(client, 'search', { query: 'billing api', detail: 'medium' })
-    expect(med.json.elements[0]).toMatchObject({ id: 'ent-billing-api', technology: 'Node.js', description: null, tags: [] })
+    const med = await call(client, 'search', { query: 'billing api', ...json })
+    expect(med.json.elements[0]).toMatchObject({ id: 'ent-billing-api', technology: 'Node.js', summary: null, tags: [] })
+    expect(med.json.elements[0].description).toBeUndefined()
     expect(med.json.elements[0].incoming).toBeUndefined()
-    expect((await call(client, 'expand', { entity: 'ent-billing', detail: 'medium' })).json.descendants.find((x: any) => x.id === 'ent-ledger-db')).toMatchObject({ technology: 'PostgreSQL', depth: 1 })
-    expect((await call(client, 'overview', { detail: 'medium' })).json.roots[0]).toMatchObject({ id: 'ent-customer', description: 'Pays invoices' })
+    expect((await call(client, 'expand', { entity: 'ent-billing', ...json })).json.descendants.find((x: any) => x.id === 'ent-ledger-db')).toMatchObject({ technology: 'PostgreSQL', depth: 1 })
     expect(d.json.qualification).toMatchObject({ status: 'unrecorded' })
 
     const nf = await call(client, 'expand', { entity: 'ent-nope' })
     expect(nf.isError).toBe(true)
     expect(nf.json.code).toBe('NOT_FOUND')
+  })
+
+  it('expand fits a budget: outline rows, bundled edges, counted elisions, focus terms', async () => {
+    const o = await call(client, 'expand', { entity: 'ent-billing', depth: 2 })
+    expect(o.json).toBeNull()
+    expect(o.text.split('\n')[0]).toMatch(/^# expand ent-billing depth=2 · 5 entities shown, 4 relationships · head [0-9a-f]{7}$/)
+    expect(o.text).toContain('  - ent-billing-api: Billing API [container] billing.billing_api · 1 child · tech Node.js')
+    expect(o.text).toContain('    - ent-charges: Charges Handler [component] billing.billing_api.charges')
+    expect(o.text).toContain("- rel-charges-cards: ent-charges -> ent-payment-gateway 'charges cards' [uses]")
+
+    // relationships=none leaves edges out; depth 0 is the entity alone.
+    const none = await call(client, 'expand', { entity: 'ent-billing', depth: 0, relationships: 'none', format: 'json' })
+    expect(none.json).toMatchObject({ descendants: [], relationships: [], bundles: [] })
+
+    // A focus term reaches below depth and describes what it names.
+    const f = await call(client, 'expand', { entity: 'ent-billing', depth: 1, focus_terms: ['charges'], format: 'json' })
+    expect(f.json.descendants.map((x: any) => x.id)).toEqual(['ent-invoice-ui', 'ent-billing-api', 'ent-charges', 'ent-ledger-db'])
+    expect(f.json.focus).toEqual({ terms: ['charges'], matched: ['ent-charges'], unmatched: [] })
+    expect((await call(client, 'expand', { entity: 'ent-billing', focus_terms: ['nothing here'], format: 'json' })).json.focus.unmatched).toEqual(['nothing here'])
+
+    // The smallest budget still answers: the entity, counts of what was cut, and the calls to get it back.
+    const tight = await call(client, 'expand', { entity: 'ent-billing', depth: 2, budget: 1 })
+    expect(tight.text.length).toBeLessThanOrEqual(2000)
+    const all = await call(client, 'expand', { entity: 'ent-billing', depth: 2, budget: 1, format: 'json' })
+    const shown = all.json.descendants.length
+    const elided = all.json.elided.reduce((t: number, x: any) => t + x.count, 0)
+    expect(shown + elided).toBe(4)
   })
 
   it('story summary rows are terse; full detail available', async () => {
@@ -143,7 +190,7 @@ describe('surface', () => {
   })
 
   it('locate grounds an agent around an entity in one call', async () => {
-    const r = await call(client, 'locate', { entity: 'ent-charges' })
+    const r = await call(client, 'locate', { entity: 'ent-charges', format: 'json' })
     expect(r.json.focus).toMatchObject({ id: 'ent-charges', parent: 'ent-billing-api', description: null, views: expect.any(Array) })
     expect(r.json.relationship).toBeUndefined()
     // Related: a datastore one level up inside billing, and an external system that shares no container.
@@ -165,21 +212,27 @@ describe('surface', () => {
     expect(r.json.levels[2].connected.map((c: any) => c.relationships.map((x: any) => x.id))).toEqual([['rel-customer-views-invoices'], ['rel-charges-cards']])
 
     // From a root: every other root is a peer, connected or not; a related entity deep in another root carries its path.
-    const top = await call(client, 'locate', { entity: 'ent-payment-gateway' })
+    const top = await call(client, 'locate', { entity: 'ent-payment-gateway', format: 'json' })
     expect(top.json.levels).toHaveLength(1)
     expect(top.json.levels[0]).toMatchObject({ container: null, connected: [{ id: 'ent-billing' }], other: [{ id: 'ent-customer' }] })
     expect(top.json.related[0]).toMatchObject({ id: 'ent-charges', under: null, path: [{ id: 'ent-billing' }, { id: 'ent-billing-api' }] })
 
     // A relationship id: the relationship in full, its source as focus, its target among related.
-    const rel = await call(client, 'locate', { entity: 'rel-charges-cards' })
+    const rel = await call(client, 'locate', { entity: 'rel-charges-cards', format: 'json' })
     expect(rel.json.relationship).toMatchObject({ id: 'rel-charges-cards', from: 'ent-charges', to: 'ent-payment-gateway', kind: 'uses' })
     expect(rel.json.focus.id).toBe('ent-charges')
     expect(rel.json.related.map((x: any) => x.id)).toContain('ent-payment-gateway')
 
     // Caps are honoured and reported.
-    const capped = await call(client, 'locate', { entity: 'ent-billing', max_peers: 1 })
+    const capped = await call(client, 'locate', { entity: 'ent-billing', max_peers: 1, format: 'json' })
     expect(capped.json.levels[0]).toMatchObject({ connected: [{ id: 'ent-customer' }], connectedTruncated: true })
     expect((await call(client, 'locate', { entity: 'nope' })).json.code).toBe('NOT_FOUND')
+
+    // The default is an outline within the budget.
+    const outline = await call(client, 'locate', { entity: 'ent-charges' })
+    expect(outline.text.split('\n')[0]).toMatch(/^# locate ent-charges · 2 related entities, 3 levels · head [0-9a-f]{7}$/)
+    expect(outline.text).toContain('within ent-billing-api:')
+    expect(outline.text).toContain('peers of ent-billing connected to it:')
   })
 
   it('changes and change', async () => {
@@ -220,7 +273,7 @@ describe('guidance', () => {
 
 describe('writes and concurrency', () => {
   const cs = (id: string, name: string) => ({
-    id, title: `Add ${name}`, intent: 'test', operations: [{ op: 'add_element', id: `ent-${name}`, parent: 'ent-billing', name, kind: 'component' }],
+    id, title: `Add ${name}`, intent: 'test', operations: [{ op: 'add_element', summary: 'Test element.', id: `ent-${name}`, parent: 'ent-billing', name, kind: 'component' }],
   })
 
   it('requires an actor and validates before writing', async () => {
@@ -264,12 +317,12 @@ describe('writes and concurrency', () => {
   })
 
   it('expected_head (short sha accepted) refuses a write on a moved repository', async () => {
-    const before = (await call(client, 'overview')).json.head
+    const before = (await call(client, 'overview', { format: 'json' })).json.head
     await call(client, 'propose', { change_set: cs('CHG-103', 'gamma'), actor: 'agent-a' })
     const stale = await call(client, 'propose', { change_set: cs('CHG-104', 'delta'), actor: 'agent-b', expected_head: before })
     expect(stale.isError).toBe(true)
     expect(stale.json.code).toBe('REPO_MOVED')
-    const fresh = (await call(client, 'overview')).json.head
+    const fresh = (await call(client, 'overview', { format: 'json' })).json.head
     const okr = await call(client, 'propose', { change_set: cs('CHG-104', 'delta'), actor: 'agent-b', expected_head: fresh })
     expect(okr.json.ok).toBe(true)
   })
@@ -306,12 +359,12 @@ describe('writes and concurrency', () => {
     const prom = await call(client, 'promote', { change_id: 'CHG-101', actor: 'agent', expected_head: acc.json.head })
     expect(prom.json).toMatchObject({ ok: true, change: 'CHG-101', added: ['ent-alpha'], deferred: [] })
     expect(await readFile(join(dir, 'model', 'model.c4'), 'utf8')).toMatch(/alpha = component/)
-    expect((await call(client, 'overview')).json.model.elements).toBe(8)
+    expect((await call(client, 'overview', { format: 'json' })).json.model.elements).toBe(8)
     // Promoted but unverified: present, and every row says it is only intended.
     const intended = await call(client, 'element', { entity: 'ent-alpha' })
     expect(intended.json).toMatchObject({ pending: ['intended'], tags: ['b4-intended'], metadata: { b4_change: 'CHG-101', b4_status: 'unverified' } })
-    expect((await call(client, 'search', { query: 'alpha' })).json.elements[0].pending).toEqual(['intended'])
-    expect((await call(client, 'expand', { entity: 'ent-billing' })).json.descendants.find((d: any) => d.id === 'ent-alpha').pending).toEqual(['intended'])
+    expect((await call(client, 'search', { query: 'alpha', format: 'json' })).json.elements[0].pending).toEqual(['intended'])
+    expect((await call(client, 'expand', { entity: 'ent-billing', format: 'json' })).json.descendants.find((d: any) => d.id === 'ent-alpha').pending).toEqual(['intended'])
     expect((await call(client, 'changes', { entity: 'ent-alpha' })).json.changes[0].state).toBe('accepted/not_started/unverified/promoted')
 
     const ev = await call(client, 'record_evidence', { change_id: 'CHG-101', actor: 'ci', evidence: {
@@ -378,7 +431,7 @@ describe('writes and concurrency', () => {
       const [ct, st] = InMemoryTransport.createLinkedPair()
       await server.connect(st)
       const cl = new Client({ name: 't', version: '0' }); await cl.connect(ct)
-      const empty = await call(cl, 'overview')
+      const empty = await call(cl, 'overview', { format: 'json' })
       expect(empty.json).toMatchObject({ ok: true, head: null, initialized: false })
       expect(empty.json.next).toMatch(/bootstrap mode=init/)
       const noName = await call(cl, 'bootstrap', { mode: 'init' })
@@ -390,7 +443,7 @@ describe('writes and concurrency', () => {
       expect(await Git.isRepo(fresh)).toBe(true)
       expect((await og.exec(['status', '--porcelain'])).trim()).toBe('?? architecture/')
       expect(await new Git(fresh).exec(['ls-files'])).not.toMatch(/lock/)
-      const ov = await call(cl, 'overview')
+      const ov = await call(cl, 'overview', { format: 'json' })
       expect(ov.json.initialized).toBeUndefined()
       expect(ov.json.model.elements).toBe(0)
       expect(ov.json.model.tags).toEqual(['external'])
@@ -398,7 +451,7 @@ describe('writes and concurrency', () => {
       expect(adopt.json).toMatchObject({ ok: true, mode: 'adopt', change_sets: [] })
       const prop = await call(cl, 'propose', { change_set: {
         id: 'CHG-1', title: 'Inferred baseline: shop', intent: 'from README', inferred: true,
-        operations: [{ op: 'add_element', id: 'ent-shop', parent: null, name: 'shop', kind: 'system', title: 'Shop' }],
+        operations: [{ op: 'add_element', summary: 'Test element.', id: 'ent-shop', parent: null, name: 'shop', kind: 'system', title: 'Shop' }],
       } })
       expect(prop.json.ok).toBe(true)
       await call(cl, 'set_disposition', { change_id: 'CHG-1', to: 'accepted' })
@@ -416,11 +469,31 @@ describe('writes and concurrency', () => {
   })
 
   it('snapshot cache follows out-of-band changes to the repository', async () => {
-    const before = (await call(client, 'overview')).json.ledger.changeSets
+    const before = (await call(client, 'overview', { format: 'json' })).json.ledger.changeSets
     await writeFile(join(dir, 'changes', 'CHG-200.yaml'), 'id: CHG-200\ntitle: external\nintent: i\noperations:\n  - op: remove_element\n    id: ent-customer\n', 'utf8')
-    const after = (await call(client, 'overview')).json.ledger.changeSets
+    const after = (await call(client, 'overview', { format: 'json' })).json.ledger.changeSets
     expect(after).toBe(before + 1)
     await git.exec(['clean', '-fq', '--', 'changes/CHG-200.yaml'])
-    expect((await call(client, 'overview')).json.ledger.changeSets).toBe(before)
+    expect((await call(client, 'overview', { format: 'json' })).json.ledger.changeSets).toBe(before)
+  })
+})
+
+describe('migrate', () => {
+  it('stores derived summaries in one editorial change set; reads then show them as stored', async () => {
+    const dry = await call(client, 'migrate', { what: 'summaries', dry_run: true, actor: 'tester' })
+    expect(dry.json).toMatchObject({ ok: true, change: null, stored: 0 })
+    expect(dry.json.would_store.length).toBeGreaterThan(0)
+    const before = (await call(client, 'overview', { format: 'json' })).json.summaries
+    expect(before.derived).toBe(dry.json.would_store.length)
+
+    const head = (await call(client, 'overview', { format: 'json' })).json.head
+    const r = await call(client, 'migrate', { what: 'summaries', actor: 'tester', expected_head: head })
+    expect(r.json).toMatchObject({ ok: true, stored: dry.json.would_store.length })
+    expect(r.json.change).toMatch(/^CHG-\d+$/)
+    const after = (await call(client, 'overview', { format: 'json' })).json.summaries
+    expect(after).toEqual({ stored: before.stored + before.derived, derived: 0, none: before.none })
+    expect((await call(client, 'overview')).text).toMatch(/^summaries: \d+ stored, 0 derived/m)
+    expect((await call(client, 'change', { change_id: r.json.change })).json.change).toMatchObject({ editorial: true })
+    expect((await call(client, 'migrate', { what: 'summaries', actor: 'tester' })).json).toMatchObject({ change: null, stored: 0 })
   })
 })

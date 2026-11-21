@@ -1,6 +1,6 @@
 {
   "name": "cb4-ledger",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Library behind cb4: change sets, stable identity, git provenance, candidate projections, governed promotion, evidence-derived verification, and storyOf() over a LikeC4 model repository",
   "license": "MIT",
   "author": "borwood",

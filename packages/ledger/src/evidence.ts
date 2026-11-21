@@ -196,8 +196,8 @@ export function targetVerification(v: Verification, target: string): TargetVerif
  * code, so it counts as implemented; otherwise verification decides, and any observation at all
  * means work is under way.
  */
-export function deriveImplementation(cs: Pick<ChangeSet, 'inferred'>, v: Verification): Implementation {
-  if (cs.inferred || v.status === 'verified') return 'implemented'
+export function deriveImplementation(cs: Pick<ChangeSet, 'inferred' | 'editorial'>, v: Verification): Implementation {
+  if (cs.inferred || cs.editorial || v.status === 'verified') return 'implemented'
   if (v.basis.length || v.failing.length) return 'in_progress'
   return 'not_started'
 }

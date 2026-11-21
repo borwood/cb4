@@ -21,7 +21,7 @@ export {
   Ledger, LedgerError, CHANGES_DIR, changeSetPath, parseChangeSet, serializeChangeSet, participantsOf, compareRecorded,
   type ChangeRecord, type Participation, type ParticipationRole, type LedgerSnapshot, type LedgerProblem, type LoadLedgerOptions,
 } from './ledger.js'
-export { locate, type LocateOptions, type LocateResult, type LocateLevel, type ConnectedEntity, type RelatedEntity, type ContainerDetail } from './locate.js'
+export { locate, type LocateOptions, type LocateResult, type LocateLevel, type ConnectedEntity, type RelatedEntity, type ContainerDetail, type ContainerRow, type LocateFocus, type Omitted } from './locate.js'
 export { storyOf, type StoryQuery, type StoryResult, type StoryEntry, type StoryInclude, type StoryDeps } from './story.js'
 export { validateChangeSet, type ValidationIssue, type ValidationResult, type ValidationContext } from './validate.js'
 export { commitMessageFor, provenanceOf, recordChangeSet, TRAILER, type CommitMessageOptions, type RecordOptions, type RecordResult, type ProvenanceTrailers } from './provenance.js'
@@ -48,3 +48,10 @@ export {
   overview, search, expand, elementDetail, resolveElement, elementRow, relationshipRow,
   type Snapshot, type Overview, type SearchOptions, type SearchResult, type ExpandOptions, type ExpandResult, type ElementDetail, type ElementRow, type RelationshipRow,
 } from './queries.js'
+export { searchMatches, matchScore, elementMedium, type Detail, type ElementMedium } from './queries.js'
+export {
+  budgetedExpand, budgetedSearch, outlineOverview, outlineRow, outlineRelationship, clampBudget, DEFAULT_BUDGET, MIN_BUDGET, MAX_BUDGET,
+  type ReadFormat, type Level, type ViewRow, type BudgetedExpand, type BudgetedExpandOptions, type BudgetedSearch, type BudgetedSearchOptions, type Bundle, type Elision,
+} from './budget.js'
+export { summaryOf, firstSentence, rawSummary, rawDescription, clip, SUMMARY_MAX, type SummaryValue } from './summary.js'
+export { migrateSummaries, type MigrateSummariesOptions, type MigrateSummariesResult } from './migrate.js'

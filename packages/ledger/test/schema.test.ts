@@ -24,7 +24,7 @@ describe('change-set schema', () => {
   it('rejects unknown fields and unknown operations', () => {
     expect(ChangeSet.safeParse({ ...minimal, status: 'done' }).success).toBe(false)
     expect(ChangeSet.safeParse({ ...minimal, operations: [{ op: 'rename_element', id: 'x' }] }).success).toBe(false)
-    expect(ChangeSet.safeParse({ ...minimal, operations: [{ op: 'add_element', id: 'x', parent: null, name: '1bad', kind: 'k' }] }).success).toBe(false)
+    expect(ChangeSet.safeParse({ ...minimal, operations: [{ op: 'add_element', summary: 'Test element.', id: 'x', parent: null, name: '1bad', kind: 'k' }] }).success).toBe(false)
   })
 
   it('rejects malformed ids', () => {
@@ -61,7 +61,7 @@ describe('participantsOf', () => {
     const cs = ChangeSet.parse({
       ...minimal,
       operations: [
-        { op: 'add_element', id: 'ent-w', parent: 'ent-b', name: 'w', kind: 'component' },
+        { op: 'add_element', summary: 'Test element.', id: 'ent-w', parent: 'ent-b', name: 'w', kind: 'component' },
         { op: 'add_relationship', id: 'rel-1', from: 'ent-api', to: 'ent-w', kind: 'uses' },
       ],
       references: [{ entity: 'ent-ui', relation: 'relates_to', reason: 'visible' }],
