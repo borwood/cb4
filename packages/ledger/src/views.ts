@@ -3,16 +3,24 @@
 //   As-is   what exists (intended entities are excluded)
 //   Target  what exists plus what is intended, with pending property updates shown as overrides
 import type { Ledger } from './ledger.js'
+import type { ChangeSet } from './schema.js'
 import type { ParsedModelData } from './model.js'
 import { STABLE_ID_KEY } from './identity.js'
 import { TAG, isReservedTag } from './reserved.js'
-import { readPending } from './status.js'
+import { pendingUpdates, promotedOrder, readPending } from './status.js'
 
 type Folder = 'As-is' | 'Target'
 
 interface Element { id: string; title: string; tags: string[]; stableId: string | undefined; raw: Record<string, any> }
 
-interface PendingValues { title?: string; summary?: string; description?: string; technology?: string }
+/**
+ * What a Target view overrides on a card. LikeC4 cards show the summary, else the description; a
+ * `with { description }` override replaces that card text, and `summary` is not an override
+ * property at all (ignored). So `card` is the intended card text: a pending summary, or a pending
+ * description only on an element without a summary. A pending description behind a summary is
+ * not on the card, and overriding it would push the full text onto the card.
+ */
+interface PendingValues { title?: string; card?: string; technology?: string }
 
 /** Quote a LikeC4 string. Multi-line content is allowed inside single quotes. */
 const q = (s: string) => `'${s.replace(/'/g, "\\'")}'`
@@ -63,21 +71,30 @@ function view(id: string, title: string, scope: string | undefined, rules: strin
 function pendingOverrides(elements: Element[], ledger?: Ledger): Map<string, PendingValues> {
   const out = new Map<string, PendingValues>()
   if (!ledger) return out
+  const order = promotedOrder(ledger)
+  const known = new Set(order.map(cs => cs.id))
   for (const el of elements) {
     if (!el.stableId) continue
     const values: PendingValues = {}
-    for (const changeId of readPending(el.raw)) {
-      for (const op of ledger.get(changeId)?.changeSet.operations ?? []) {
-        if (op.op !== 'update_element' || op.id !== el.stableId) continue
-        if (op.set.title !== undefined) values.title = op.set.title
-        if (op.set.summary) values.summary = op.set.summary
-        if (op.set.description) values.description = op.set.description
-        if (op.set.technology) values.technology = op.set.technology
-      }
+    let summarised = hasSummary(el.raw)
+    const pending = readPending(el.raw)
+    // A change set being promoted right now is pending without a promotion record yet: it is the newest.
+    const fresh = pending.filter(id => !known.has(id)).map(id => ledger.get(id)?.changeSet).filter((cs): cs is ChangeSet => !!cs)
+    for (const op of pendingUpdates(fresh.length ? [...order, ...fresh] : order, el.stableId, pending)) {
+      if (op.op !== 'update_element') continue
+      if (op.set.title !== undefined) values.title = op.set.title
+      if (op.set.summary) { values.card = op.set.summary; summarised = true }
+      else if (op.set.description && !summarised) values.card = op.set.description
+      if (op.set.technology) values.technology = op.set.technology
     }
     if (Object.keys(values).length) out.set(el.id, values)
   }
   return out
+}
+
+const hasSummary = (raw: Record<string, any>): boolean => {
+  const v = raw.summary
+  return !!(typeof v === 'string' ? v.trim() : (v?.txt ?? v?.md ?? '').trim())
 }
 
 function withOverrides(inScope: Element[], overrides: Map<string, PendingValues>): string[] {
@@ -85,7 +102,7 @@ function withOverrides(inScope: Element[], overrides: Map<string, PendingValues>
   for (const el of inScope) {
     const v = overrides.get(el.id)
     if (!v) continue
-    const props = [v.title !== undefined ? `title ${q(v.title)}` : null, v.summary ? `summary ${q(v.summary)}` : null, v.description ? `description ${q(v.description)}` : null, v.technology ? `technology ${q(v.technology)}` : null].filter(Boolean)
+    const props = [v.title !== undefined ? `title ${q(v.title)}` : null, v.card ? `description ${q(v.card)}` : null, v.technology ? `technology ${q(v.technology)}` : null].filter(Boolean)
     rules.push(`include ${el.id} with { ${props.join('; ')} }`)
   }
   return rules

@@ -8,7 +8,7 @@ import { Git } from './git.js'
 import { IdentityRegistry } from './identity.js'
 import { Ledger } from './ledger.js'
 import { loadModel, modelFromParsedData, MODEL_DIR, type ParsedModelData } from './model.js'
-import { finalizeBaseline, type AppliedOperation, type StatusCount } from './status.js'
+import { finalizeBaseline, type AbandonedOperation, type AppliedOperation, type StatusCount } from './status.js'
 import { generateAndCheck, readWorkspace, sameWorkspace, summarizeErrors, writeWorkspace } from './workspace.js'
 
 export interface ReconcileOptions {
@@ -25,6 +25,8 @@ export interface ReconcileResult {
   /** HEAD the reconciliation was computed against. */
   baseline: string
   applied: AppliedOperation[]
+  /** Deferred operations dropped because a promoted change set superseded theirs. */
+  abandoned: AbandonedOperation[]
   warnings: string[]
   counts: StatusCount
 }
@@ -55,7 +57,7 @@ export async function reconcileBaseline(repoDir: string, opts: ReconcileOptions)
   const check = await generateAndCheck(data, ledger)
   if (check.errors.length) throw new ReconcileRefused(`reconciled model is invalid; baseline left unchanged:\n  ${summarizeErrors(check.errors).join('\n  ')}`)
   const modelDir = join(repoDir, MODEL_DIR)
-  const base = { baseline: head, applied: final.applied, warnings: final.warnings, counts: final.statuses.counts }
+  const base = { baseline: head, applied: final.applied, abandoned: final.abandoned, warnings: final.warnings, counts: final.statuses.counts }
   if (sameWorkspace(await readWorkspace(modelDir), check.files)) return { changed: false, sha: head, ...base }
 
   const expected = stableIds(IdentityRegistry.fromModel(await modelFromParsedData(data)))
@@ -67,9 +69,10 @@ export async function reconcileBaseline(repoDir: string, opts: ReconcileOptions)
     await writeWorkspace(modelDir, check.files)
     await git.exec(['add', '-A', '--', MODEL_DIR])
     const applied = final.applied.map(a => `Applied: ${a.changeId} ${a.op} ${a.entityId}`)
+    const abandoned = final.abandoned.map(a => `Abandoned: ${a.changeId} on ${a.entityId} (superseded by ${a.supersededBy})`)
     const message = [
-      `reconcile baseline: ${final.applied.length} verified operation${final.applied.length === 1 ? '' : 's'} applied`,
-      [...applied, `Reconciled-From: ${head}`, `Actor: ${opts.actor}`].join('\n'),
+      `reconcile baseline: ${final.applied.length} verified operation${final.applied.length === 1 ? '' : 's'} applied${final.abandoned.length ? `, ${final.abandoned.length} superseded dropped` : ''}`,
+      [...applied, ...abandoned, `Reconciled-From: ${head}`, `Actor: ${opts.actor}`].join('\n'),
     ].join('\n\n') + '\n'
     const sha = await git.commit(message, { date: opts.date })
     return { changed: true, sha, ...base }

@@ -43,9 +43,11 @@ will show as `unverified` until evidence is recorded. Prefer fewer, truer elemen
    - keep each change set under ~50 operations; split large roots by subsystem
 5. A final change set for cross-boundary relationships, if any, with `depends_on` the roots it joins.
 6. `validate` and `propose` every change set first; validation projects unpromoted `depends_on`, so
-   the whole adoption can be proposed and reviewed as a batch. Then `set_disposition to=accepted`
-   and `promote` in dependency order. Pass `expected_head` from the previous response when other
-   agents may be active.
+   the whole adoption can be proposed and reviewed as a batch (pass large ones as
+   `change_set_path=<file>`). Then, for each change set nothing else depends on (the
+   cross-boundary one, or each root without it), `promote with_dependencies=true accept=true`
+   accepts and promotes it and its chain in dependency order, one commit per step. Pass `expected_head`
+   from the previous response when other agents may be active.
 7. `qualify` and report counts. Everything should be `unverified`, nothing `unrecorded`. Offer the
    person `render` (interactive HTML, folders As-is and Target) rather than PNGs.
 

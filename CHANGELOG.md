@@ -8,6 +8,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
+### Upgrading
+
+- **Breaking:** `migrate` is no longer an MCP tool. Migrations are upgrade steps you run once, when
+  a release says to, so they are on the command line now:
+  `cb4 migrate summaries [repoDir] --actor <name> [--dry-run]`. Reads still count summaries
+  derived from descriptions, but no longer say how to store them. If your `overview` reports
+  derived summaries, run `npx cb4-mcp migrate summaries <repoDir> --actor <you> --dry-run`, then
+  without `--dry-run`. It records one editorial change set and changes no status.
+- After upgrading, run `reconcile` once. Pending markers held by change sets that a promoted
+  change set supersedes are dropped (see Fixed). Then run
+  `npx cb4-mcp migrate update-order <repoDir> --actor <you> --dry-run`. It lists values that an
+  earlier version overwrote when an older update was verified after a newer one, and restores them
+  when you run it again without `--dry-run`. The repair is derived from the ledger, and a value is
+  only restored when the committed one came from an older update.
+- If you installed the skills with `cb4 skill`, run it again. The guide now covers replacing a
+  promoted plan with a correction that declares `supersedes`, closing out a feature with what was
+  built, `description_append`, relationship coverage and chained promotion.
+
+### Added
+
+- `propose` and `validate` take `change_set_path` (a YAML or JSON file) instead of `change_set`,
+  for change sets too large to pass inline. Relative paths resolve against the server's working
+  directory. In `cb4-ledger`: `readChangeSetInput()`.
+- `promote` takes `with_dependencies=true` to promote the unpromoted `depends_on` chain first, in
+  dependency order, with one commit per step. `accept=true` accepts proposed change sets on the way
+  (it also works without `with_dependencies`). The chain stops at the first refusal; steps already
+  done stay, and the result says where it stopped (`stopped`). In `cb4-ledger`: `promoteChain()`.
+- `update_element` takes `set.description_append` to add a paragraph to the intended description
+  rather than replace it. `propose` records the full resulting text.
+- `W_DESCRIPTION_DROPS_TEXT`: an `update_element` whose new description leaves out sentences of
+  the intended description warns. The intended description is the committed one plus pending
+  updates and unpromoted `depends_on` change sets, not just the committed one.
+- `record_evidence` returns `uncovered` (targets no passing observation covers yet). It also returns
+  a `hint` naming relationships whose endpoints are both covered when no record names the
+  relationship itself. Covering both endpoints still does not cover the link.
+
+### Fixed
+
+- A promoted change set that declares `supersedes: [X]` now ends X's pending updates and removals.
+  They are dropped unapplied when the replacement is promoted, or at the next reconcile, and X's
+  `b4_pending` markers clear. Before this, `supersedes` was only recorded: X stayed pending
+  forever, and evidence on X could still apply its old text. `promote` and `reconcile` report the
+  dropped operations as `abandoned`, and `record_evidence` on X warns that it changes nothing.
+  Additions X made stay.
+- Target views no longer put a pending description on the card of an element that has a summary.
+  LikeC4 cards show the summary, but a view's `description` override replaced it, so the full
+  text landed on the card. A pending summary is now the card text instead: LikeC4 ignores `summary`
+  inside `with { }`, so the summary override cb4 wrote before had no effect. Elements without a
+  summary still show a pending description on the card, as their As-is card shows the description.
+- `record_evidence` no longer requires `recorded_by`: it defaults to the actor (`actor=` or the
+  server's `--actor`). The stored record still always names who recorded it.
+- A deferred update verified after a newer update of the same entity no longer overwrites the newer
+  values. It now sets only the fields (and metadata keys) the newer one left alone. Target views show
+  the same values. Before this, verifying an older change set after a newer one put the older
+  description back.
+
 ## [0.4.0] - 2026-11-21
 
 ### Upgrading
@@ -238,7 +296,8 @@ First public release, renamed from the `like-b4` prototype.
 - MCP server with seventeen bounded, compact tools; a relative model-repository path anchors to the
   main worktree so linked worktrees and subagents share one ledger.
 
-[Unreleased]: https://github.com/borwood/cb4/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/borwood/cb4/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/borwood/cb4/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/borwood/cb4/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/borwood/cb4/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/borwood/cb4/compare/v0.2.0...v0.2.1

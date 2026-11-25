@@ -41,18 +41,23 @@ export interface HistoryOptions {
 
 export interface AppliedOperation { changeId: string; entityId: string; op: Operation['op'] }
 
+/** A deferred operation dropped unapplied because a promoted change set superseded its change set. */
+export interface AbandonedOperation { changeId: string; entityId: string; supersededBy: string }
+
 export interface FinalizeResult {
   /** Deferred operations that became verified and were applied. */
   applied: AppliedOperation[]
+  /** Deferred operations dropped because their change set was superseded by a promoted one. */
+  abandoned: AbandonedOperation[]
   warnings: string[]
   statuses: StatusSummary
 }
 
 /** Apply every verified deferred operation, then annotate every entity. The one pipeline behind promotion, reconciliation and adoption. */
 export async function finalizeBaseline(data: ParsedModelData, ledger: Ledger, opts: HistoryOptions = {}): Promise<FinalizeResult> {
-  const { applied, warnings } = await applyVerifiedPending(data, ledger, opts)
+  const { applied, abandoned, warnings } = await applyVerifiedPending(data, ledger, opts)
   const statuses = await annotateStatuses(data, ledger, opts)
-  return { applied, warnings, statuses }
+  return { applied, abandoned, warnings, statuses }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -145,45 +150,112 @@ export function intendedIds(data: ParsedModelData, registry: IdentityRegistry): 
 // ---------------------------------------------------------------------------------------------
 // Applying verified deferred operations
 
-async function applyVerifiedPending(data: ParsedModelData, ledger: Ledger, opts: HistoryOptions): Promise<{ applied: AppliedOperation[]; warnings: string[] }> {
+async function applyVerifiedPending(data: ParsedModelData, ledger: Ledger, opts: HistoryOptions): Promise<{ applied: AppliedOperation[]; abandoned: AbandonedOperation[]; warnings: string[] }> {
   const applied: AppliedOperation[] = []
+  const abandoned: AbandonedOperation[] = []
   const warnings: string[] = []
   const records = new Map(promotedRecords(ledger, opts).map(r => [r.changeSet.id, r]))
+  // Editorial change sets count here: their wording is in the model and must not be overwritten either.
+  const order = promotedRecords(ledger, opts, { editorial: true }).map(r => r.changeSet)
+  const supersededBy = supersessions(order)
 
   // Each pass applies at most one change set's operations on one entity, then recomputes identity,
   // because a removal cascades. Every pass retires a marker or an entity, so this terminates.
   for (;;) {
     const registry = IdentityRegistry.fromModel(await modelFromParsedData(data))
-    const step = await applyOnePending(data, registry, records, warnings)
-    if (!step) return { applied, warnings }
-    applied.push(...step)
+    const step = await applyOnePending(data, registry, records, order, supersededBy, warnings)
+    if (!step) return { applied, abandoned, warnings }
+    applied.push(...step.applied)
+    abandoned.push(...step.abandoned)
   }
 }
 
-async function applyOnePending(data: ParsedModelData, registry: IdentityRegistry, records: Map<string, ChangeRecord>, warnings: string[]): Promise<AppliedOperation[] | null> {
+async function applyOnePending(
+  data: ParsedModelData, registry: IdentityRegistry, records: Map<string, ChangeRecord>, order: ChangeSet[], supersededBy: Map<string, string>, warnings: string[],
+): Promise<{ applied: AppliedOperation[]; abandoned: AbandonedOperation[] } | null> {
   const entities = [...registry.elements(), ...registry.relationships()]
   for (const rec of entities) {
     const entity = entityData(data, registry, rec.stableId)
     if (!entity) continue
     const pending = readPending(entity)
     if (!pending.length) continue
+    // A promoted replacement carries the intent now; the superseded plan's waiting operations never land, verified or not.
+    const dropped = pending.filter(id => supersededBy.has(id))
+    if (dropped.length) {
+      setPending(entity, pending.filter(id => !supersededBy.has(id)))
+      return { applied: [], abandoned: dropped.map(id => ({ changeId: id, entityId: rec.stableId, supersededBy: supersededBy.get(id)! })) }
+    }
     for (const changeId of [...records.keys()].filter(id => pending.includes(id))) {
       const record = records.get(changeId)!
       if (!isIntended(entity) && targetVerification(record.verification, rec.stableId) !== 'verified') continue
       const ops = record.changeSet.operations.filter(op => op.id === rec.stableId && isDeferrable(op))
+        .map(op => withoutSuperseded(op, newerApplied(order, changeId, rec.stableId, pending)))
       const diff = emptyDiff()
       for (const op of ops) applyOperation(data, new WorkingIds(registry), op, changeId, { highlight: false }, diff)
       if (!diff.removed.length) setPending(entity, pending.filter(id => id !== changeId))
-      return ops.map(op => ({ changeId, entityId: rec.stableId, op: op.op }))
+      return { applied: ops.map(op => ({ changeId, entityId: rec.stableId, op: op.op })), abandoned: [] }
     }
     const unknown = pending.filter(id => !records.has(id))
     if (unknown.length) {
       warnings.push(`${rec.stableId}: pending change set(s) ${unknown.join(', ')} are not promoted in the ledger; marker dropped`)
       setPending(entity, pending.filter(id => records.has(id)))
-      return []
+      return { applied: [], abandoned: [] }
     }
   }
   return null
+}
+
+/**
+ * Updates on `entityId` from change sets recorded after `changeId` that are already in the model:
+ * promoted and not waiting on the entity. Their values are newer than anything `changeId` sets.
+ */
+function newerApplied(order: ChangeSet[], changeId: string, entityId: string, pending: string[]): Operation[] {
+  const at = order.findIndex(cs => cs.id === changeId)
+  if (at < 0) return []
+  return order.slice(at + 1)
+    .filter(cs => !pending.includes(cs.id))
+    .flatMap(cs => cs.operations.filter(op => op.id === entityId && op.op.startsWith('update_')))
+}
+
+/** Change set id -> the earliest promoted change set (in recorded order) that declares it superseded. */
+export function supersessions(order: ChangeSet[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const cs of order) for (const s of cs.supersedes) if (s !== cs.id && !out.has(s)) out.set(s, cs.id)
+  return out
+}
+
+/** Promoted change sets, editorial ones included, in recorded order: the order their values land in. */
+export const promotedOrder = (ledger: Ledger): ChangeSet[] => promotedRecords(ledger, {}, { editorial: true }).map(r => r.changeSet)
+
+/**
+ * The deferred updates still waiting on an entity, oldest first, each reduced to what newer applied
+ * updates left alone: the values the entity will hold once they land. Target views show these.
+ */
+export function pendingUpdates(order: ChangeSet[], entityId: string, pending: string[]): Operation[] {
+  return order.filter(cs => pending.includes(cs.id)).flatMap(cs => cs.operations
+    .filter(op => op.id === entityId && op.op.startsWith('update_'))
+    .map(op => withoutSuperseded(op, newerApplied(order, cs.id, entityId, pending))))
+}
+
+/**
+ * A deferred update applied late, after newer updates of the same entity already landed, sets only
+ * what they left alone: field by field, and metadata key by key. Removals are never masked.
+ */
+export function withoutSuperseded(op: Operation, newer: Operation[]): Operation {
+  if (!('set' in op) || !newer.length) return op
+  const set: Record<string, unknown> = { ...op.set }
+  for (const n of newer) {
+    if (!('set' in n)) continue
+    for (const [k, v] of Object.entries(n.set)) {
+      if (k === 'metadata' && set.metadata && v && typeof v === 'object') {
+        const md = { ...(set.metadata as Record<string, unknown>) }
+        for (const mk of Object.keys(v)) delete md[mk]
+        if (Object.keys(md).length) set.metadata = md
+        else delete set.metadata
+      } else delete set[k]
+    }
+  }
+  return { ...op, set } as Operation
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -191,11 +263,11 @@ async function applyOnePending(data: ParsedModelData, registry: IdentityRegistry
 
 interface OpEvent { rec: ChangeRecord; op: Operation }
 
-function promotedRecords(ledger: Ledger, opts: HistoryOptions): ChangeRecord[] {
+function promotedRecords(ledger: Ledger, opts: HistoryOptions, include: { editorial?: boolean } = {}): ChangeRecord[] {
   return ledger.all()
     .map(rec => (opts.promoting && rec.changeSet.id === opts.promoting.id ? { ...rec, changeSet: opts.promoting } : rec))
     // Editorial change sets change wording only: they prove nothing exists and are never an entity's latest change.
-    .filter(rec => !!rec.changeSet.promotion && !rec.changeSet.editorial)
+    .filter(rec => !!rec.changeSet.promotion && (include.editorial || !rec.changeSet.editorial))
 }
 
 /** Promoted operations per entity, in recorded chronology. */

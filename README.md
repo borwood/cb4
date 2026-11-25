@@ -95,7 +95,8 @@ faithful to. `help plan` and the `cb4-guide` skill lay this out.
 applies additions and moves and marks them intended, defers updates and removals of things that
 exist until they are verified, regenerates model and views, confirms every stable id survived, and
 commits model and promotion record together. Promoted change sets are frozen; follow-ups depend on
-them or supersede them. Builder agents see the target they are building to, and the as-is state
+them, and a correction that declares `supersedes` replaces one: the old set's pending updates and
+removals are dropped when the correction is promoted. Builder agents see the target they are building to, and the as-is state
 beside it.
 
 **Build and prove.** As implementation lands, CI or the agent records evidence: a passing

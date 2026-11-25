@@ -86,17 +86,20 @@ budget never shows more.
 description; an element without one shows its description's first sentence, flagged
 `summaryDerived`, and reads never write it back. `migrateSummaries(repoDir, { actor, dryRun })`
 stores the derived ones as a single editorial change set that changes no status.
+`repairUpdateOrder(repoDir, { actor, dryRun })` restores values that a pre-0.5.0 reconcile overwrote
+when an older update was verified after a newer one.
 
 ## Change sets
 
 ```ts
-import { validateChangeSet, validateInContext, proposeChangeSet, setDisposition, promoteChangeSet } from 'cb4-ledger'
+import { validateChangeSet, validateInContext, proposeChangeSet, setDisposition, promoteChangeSet, promoteChain } from 'cb4-ledger'
 
 const check = validateChangeSet(yamlObject, { registry, ledger })           // against one registry
 const staged = await validateInContext(loaded, yamlObject, ledger)         // unpromoted depends_on projected first
 await proposeChangeSet(repoDir, yamlObject, { actor: 'planning-agent', expectedBaseRevision: sha })
 await setDisposition(repoDir, 'CHG-042', 'accepted', { actor: 'reviewer' })
 await promoteChangeSet(repoDir, 'CHG-042', { actor: 'release-agent', expectedHead: sha })
+await promoteChain(repoDir, 'CHG-045', { actor: 'release-agent', accept: true }) // its unpromoted depends_on first
 ```
 
 **Validation refuses before LikeC4 would.** Schema first, then the operations in order against a
@@ -107,7 +110,10 @@ that a relationship cannot connect an element with its own ancestor or descendan
 existence and cycles. Warnings cover empty change sets and references that duplicate an operation.
 With `authoring: true` (what proposing uses), a new element must carry a one-line `summary`
 (`E_MISSING_SUMMARY`) and a summary cannot be removed; records already in the ledger are not
-held to this.
+held to this. A new description that leaves out sentences of the intended one (committed, then
+pending updates, then unpromoted dependencies) warns `W_DESCRIPTION_DROPS_TEXT`;
+`validateInContext` and proposing expand `set.description_append` into the full text first, and
+`readChangeSetInput(path)` reads a change set from a YAML or JSON file.
 `validateInContext` first projects the change set's unpromoted dependencies (transitively) onto the
 baseline, so related change sets can be proposed before any is promoted; its result lists the
 `projected` ids, and warns (`W_DEPENDENCY_NOT_PROJECTED`) when they do not apply cleanly.
@@ -141,7 +147,7 @@ repository.
 ```ts
 import { reconcileBaseline, annotateStatuses, TAG, META, flagsOfTags } from 'cb4-ledger'
 
-await reconcileBaseline(repoDir, { actor: 'ci' })   // { changed, sha, applied, warnings, counts }
+await reconcileBaseline(repoDir, { actor: 'ci' })   // { changed, sha, applied, abandoned, warnings, counts }
 const s = await annotateStatuses(parsedData, ledger) // per-entity flags and reasons, data annotated in place
 flagsOfTags(element.tags)                            // ['intended'] | ['retiring'] | ['pending_update', 'failed'] | []
 ```
@@ -156,7 +162,9 @@ rejects `b4-*` tags, `b4_*` metadata and `stable_id` (`E_RESERVED_TAG`, `E_RESER
 replacement keeps them. Building on a retiring element is allowed and warned (`W_RETIRING_TARGET`).
 
 `reconcileBaseline` applies every deferred operation whose change set is now verified for that
-target (removals cascade), refreshes all flags, regenerates `model/`, and commits once, only when
+target (removals cascade), in recorded order: an older update verified after a newer one only sets
+the fields the newer one left alone. It drops, as `abandoned`, the pending operations of any change
+set that a promoted change set declares in `supersedes`. It refreshes all flags, regenerates `model/`, and commits once, only when
 something changed. It is idempotent, and it is how a repository written before statuses existed is
 brought up to date. Verification per target comes from `targetVerification`; implementation
 progress from `deriveImplementation` (inferred or verified: implemented; any observation: in
@@ -209,7 +217,8 @@ console.log(formatQualification(q))
 Evidence records have `id`, `kind` (test, runtime_observation, deployment, code_review,
 manual_review), `result` (pass, fail, inconclusive), optional `targets` (stable ids the record
 speaks to; none means the whole change set), `source_ref`, optional `code_revision`,
-`baseline_revision`, and `environment`, `observed_at`, `recorded_by`, and optional `amends`
+`baseline_revision`, and `environment`, `observed_at`, `recorded_by` (defaults to the recording
+actor), and optional `amends`
 pointing at an earlier record it corrects. Corrections are new records; the prior claim stays on
 file and in git. Recording refuses evidence for unknown change sets or uninvolved entities and
 never touches `model/` or `changes/`.

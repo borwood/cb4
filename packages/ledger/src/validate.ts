@@ -5,7 +5,8 @@ import { ChangeSet, normalizeChangeSetInput, type ChangeSet as ChangeSetT } from
 import { IdentityRegistry, STABLE_ID_KEY } from './identity.js'
 import type { Ledger } from './ledger.js'
 import { DEPRECATED_CHANGE_SET_FIELDS, TAG, isLikeC4ReservedWord, isReservedMetadataKey, isReservedTag } from './reserved.js'
-import { SUMMARY_MAX } from './summary.js'
+import { SUMMARY_MAX, clip } from './summary.js'
+import { droppedSentences, type DescriptionLookup } from './intended.js'
 
 export interface ValidationIssue {
   severity: 'error' | 'warning'
@@ -26,6 +27,11 @@ export interface ValidationContext {
    * recorded before the rule still apply.
    */
   authoring?: boolean
+  /**
+   * Each element's description as it will be once promoted-but-pending updates and unpromoted
+   * dependencies land (intended.ts). With authoring, an update that drops text from it warns.
+   */
+  intendedDescription?: DescriptionLookup
 }
 
 export interface ValidationResult {
@@ -129,6 +135,9 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
   /** Relationships taken away by an element removal earlier in this change set. */
   const cascaded = new Set<string>()
   const mutated = new Set<string>()
+  /** Descriptions as set earlier in this change set. */
+  const descriptions = new Map<string, string | null>()
+  const descriptionNow = (id: string) => (descriptions.has(id) ? descriptions.get(id)! : ctx.intendedDescription?.(id) ?? null)
   const cascadeRemove = (fqn: string) => {
     const under = (f: string) => f === fqn || f.startsWith(fqn + '.')
     for (const r of reg.elements()) if (under(r.fqn)) removed.add(r.stableId)
@@ -175,6 +184,7 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
         const fqn = parentFqn ? `${parentFqn}.${op.name}` : op.name
         if (nameTaken(fqn)) err('E_DUPLICATE_NAME', `${p}/name`, `an element named ${fqn} already exists`)
         added.set(op.id, { fqn, kind: op.kind })
+        descriptions.set(op.id, op.description ?? null)
         mutated.add(op.id)
         for (const [j, d] of (op.derived_from ?? []).entries()) {
           if (d === op.id) err('E_SELF_LINEAGE', `${p}/derived_from/${j}`, `${op.id} cannot derive from itself`)
@@ -191,6 +201,14 @@ export function validateChangeSet(input: unknown, ctx: ValidationContext = {}): 
         if (ctx.authoring && op.set.description !== undefined && op.set.summary === undefined) {
           warn('W_SUMMARY_STALE', `${p}/set`, 'the description changes but the summary does not; check it still holds, or set summary too')
         }
+        if (ctx.authoring && ctx.intendedDescription && typeof op.set.description === 'string') {
+          const before = descriptionNow(op.id)
+          const dropped = before ? droppedSentences(before, op.set.description) : []
+          if (dropped.length) {
+            warn('W_DESCRIPTION_DROPS_TEXT', `${p}/set/description`, `the description replaces the current one and leaves out ${dropped.length} of its sentence${dropped.length === 1 ? '' : 's'}, starting with "${clip(dropped[0]!, 80)}"; restate what still holds, use description_append to add, or ignore if the removal is meant`)
+          }
+        }
+        if (op.set.description !== undefined) descriptions.set(op.id, op.set.description)
         break
       }
       case 'move_element': {

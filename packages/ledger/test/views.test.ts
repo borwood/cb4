@@ -16,9 +16,10 @@ const data = {
 }
 
 const ledger = {
+  all: () => [],
   get: (id: string) => ({
-    'CHG-5': { changeSet: { operations: [{ op: 'update_element', id: 'ent-web', set: { title: 'Web App', technology: 'Next.js' } }] } },
-    'CHG-6': { changeSet: { operations: [{ op: 'update_element', id: 'ent-web', set: { description: 'Serves the shop' } }, { op: 'update_element', id: 'ent-db', set: { title: 'ignored: not pending' } }] } },
+    'CHG-5': { changeSet: { id: 'CHG-5', operations: [{ op: 'update_element', id: 'ent-web', set: { title: 'Web App', technology: 'Next.js' } }] } },
+    'CHG-6': { changeSet: { id: 'CHG-6', operations: [{ op: 'update_element', id: 'ent-web', set: { description: 'Serves the shop' } }, { op: 'update_element', id: 'ent-db', set: { title: 'ignored: not pending' } }] } },
   } as Record<string, any>)[id],
 } as unknown as Ledger
 
@@ -66,5 +67,33 @@ describe('generateViews', () => {
     const empty = generateViews({ specification: { tags: {} }, elements: {}, relations: {} })
     expect([...empty.matchAll(/^  view ([\w-]+)/gm)].map(m => m[1])).toEqual(['index', 'index--target'])
     expect(empty).not.toContain('everything')
+  })
+})
+
+describe('Target card text', () => {
+  // LikeC4 cards show the summary; a description override replaces the card text, and summary is not an override property.
+  const model = (pending: string) => ({
+    specification: { tags: {} },
+    elements: {
+      app: { id: 'app', title: 'App', metadata: { stable_id: 'ent-app' } },
+      'app.ui': { id: 'app.ui', title: 'UI', summary: { txt: 'Short line.' }, metadata: { stable_id: 'ent-ui', [META.pending]: pending } },
+    },
+    relations: {},
+  })
+  const ledgerOf = (sets: Record<string, Record<string, string>>) => ({
+    all: () => [],
+    get: (id: string) => sets[id] ? { changeSet: { id, operations: [{ op: 'update_element', id: 'ent-ui', set: sets[id] }] } } : undefined,
+  } as unknown as Ledger)
+
+  it('a pending description behind a summary is not put on the card', () => {
+    const out = generateViews(model('CHG-1') as any, ledgerOf({ 'CHG-1': { description: 'A long description. '.repeat(20), technology: 'egui' } }))
+    expect(out).toContain("include app.ui with { technology 'egui' }")
+    expect(out).not.toContain('A long description')
+  })
+
+  it('a pending summary is the card text, written as the description override', () => {
+    const out = generateViews(model('CHG-1') as any, ledgerOf({ 'CHG-1': { summary: 'New line.', description: 'Long.' } }))
+    expect(out).toContain("include app.ui with { description 'New line.' }")
+    expect(out).not.toMatch(/with \{[^}]*summary/)
   })
 })

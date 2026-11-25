@@ -418,7 +418,7 @@ function footer(d: Pick<BudgetedExpand, 'degraded' | 'hiddenRelationships' | 'bu
   if (d.bundledAtDepth !== undefined) L.push(`bundled (budget): relationships counted between containers at depth ${d.bundledAtDepth}; expand a child for its own edges`)
   if (d.hiddenRelationships) L.push(`hidden: ${d.hiddenRelationships} relationships with both ends inside one entity shown; expand or element it to see them`)
   if (d.truncated) L.push('truncated: max_nodes reached before depth; raise max_nodes or expand a child')
-  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored yet; migrate what=summaries stores them)`)
+  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored)`)
   return L
 }
 
@@ -501,7 +501,7 @@ function outlineSearch(d: BudgetedSearch, opts: BudgetedSearchOptions, limit: nu
   if (d.elided.elements || d.elided.relationships) L.push(`elided (budget): ${d.elided.elements} elements, ${d.elided.relationships} relationships; raise budget or narrow the query`)
   if (d.more.elements || d.more.relationships) L.push(`more: ${d.more.elements} elements, ${d.more.relationships} relationships beyond limit=${limit}; raise limit (<=50) or narrow with under, kinds, tags, metadata`)
   if (d.degraded.withoutSummary) L.push(`degraded (budget): ${d.degraded.withoutSummary} without summary; element entity=<id> shows any in full`)
-  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored yet; migrate what=summaries stores them)`)
+  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored)`)
   return L.join('\n') + '\n'
 }
 
@@ -521,6 +521,6 @@ export function outlineOverview(o: Overview, head: string | null): string {
   if (lg.open.length) L.push(`open: ${lg.open.join(', ')}${lg.openTruncated ? ', … (changes disposition=proposed|accepted promoted=false)' : ''}`)
   if (o.identity.withoutStableId) L.push(`identity: ${o.identity.withoutStableId} elements without a stable id (help ids)`)
   const sm = o.summaries
-  if (sm.derived || sm.none) L.push(`summaries: ${sm.stored} stored, ${sm.derived} derived from the description on read (migrate what=summaries stores them), ${sm.none} with neither`)
+  if (sm.derived || sm.none) L.push(`summaries: ${sm.stored} stored, ${sm.derived} derived from the description on read, ${sm.none} with neither`)
   return L.join('\n') + '\n'
 }

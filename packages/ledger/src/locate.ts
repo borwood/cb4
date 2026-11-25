@@ -425,7 +425,7 @@ function outlineLocate(d: LocateResult, head: string | null): string {
   if (g.descriptions || g.relationshipLists || g.summaries) {
     L.push(`degraded (budget): ${[g.descriptions ? plural(g.descriptions, 'description') : '', g.relationshipLists ? `${plural(g.relationshipLists, 'relationship list')} counted` : '', g.summaries ? `${plural(g.summaries, 'row')} without summary` : ''].filter(Boolean).join(', ')}; element entity=<id> shows any in full`)
   }
-  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored yet; migrate what=summaries stores them)`)
+  if (d.summariesDerived) L.push(`summaries: ${d.summariesDerived} derived from the first sentence of the description (not stored)`)
   if (d.budget.over) L.push('over budget: even the smallest view does not fit; raise budget')
   return L.join('\n') + '\n'
 }

@@ -183,6 +183,24 @@ export function deriveVerification(cs: ChangeSet, records: EvidenceRecord[], pol
   }
 }
 
+/**
+ * Uncovered relationships of the change set whose two endpoints are both covered. Evidence that
+ * the endpoints exist does not show the link between them, so these stay uncovered; but they are
+ * usually an omission from `targets`, worth pointing out. `endpointsOf` resolves relationships the
+ * change set does not add (stable ids of from/to).
+ */
+export function relationshipsWithCoveredEndpoints(cs: ChangeSet, v: Verification, endpointsOf: (relId: string) => { from: string; to: string } | undefined): string[] {
+  const covered = new Set(v.covered)
+  const uncovered = new Set(v.uncovered)
+  const out: string[] = []
+  for (const op of cs.operations) {
+    if (!op.op.endsWith('_relationship') || !uncovered.has(op.id) || out.includes(op.id)) continue
+    const ends = op.op === 'add_relationship' ? { from: op.from, to: op.to } : endpointsOf(op.id)
+    if (ends && covered.has(ends.from) && covered.has(ends.to)) out.push(op.id)
+  }
+  return out
+}
+
 export type TargetVerification = 'verified' | 'unverified' | 'failed'
 
 /** Verification of one operation target: failing evidence wins, then a passing observation covering it. */
@@ -232,6 +250,10 @@ export async function recordEvidence(repoDir: string, changeId: string, input: u
   if (opts.expectedRevision !== undefined && head !== opts.expectedRevision) {
     throw new Error(`repository moved: expected ${opts.expectedRevision}, HEAD is ${head}`)
   }
+  // recorded_by defaults to the actor recording it; the stored record always names one.
+  if (input && typeof input === 'object' && !Array.isArray(input) && (input as Record<string, unknown>).recorded_by === undefined) {
+    input = { ...(input as Record<string, unknown>), recorded_by: opts.actor }
+  }
   const parsed = EvidenceRecord.safeParse(input)
   if (!parsed.success) {
     const problems = parsed.error.issues.map(i => ({ path: '/' + i.path.join('/'), message: i.message }))
@@ -243,6 +265,10 @@ export async function recordEvidence(repoDir: string, changeId: string, input: u
   if (!change) throw new Error(`${changeId} is not in the ledger`)
 
   const warnings: string[] = []
+  const replacement = ledger.all().find(r => r.changeSet.promotion && r.changeSet.supersedes.includes(changeId))
+  if (replacement && change.changeSet.promotion) {
+    warnings.push(`${changeId} is superseded by ${replacement.changeSet.id}: its pending updates and removals were dropped, so this record changes no entity; record evidence on ${replacement.changeSet.id} for what it now describes`)
+  }
   const targets = new Set(targetsOf(change.changeSet))
   const participants = new Set(change.participants.map(p => p.entityId))
   for (const t of rec.targets) {

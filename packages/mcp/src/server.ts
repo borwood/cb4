@@ -2,20 +2,21 @@
 // defaults, help on demand. See help.ts for the documentation agents can pull in when they need it.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import { resolve } from 'node:path'
 import { z } from 'zod'
 import {
-  storyOf, validateInContext, proposeChangeSet, setDisposition, promoteChangeSet, recordEvidence, reconcileBaseline,
+  storyOf, validateInContext, relationshipsWithCoveredEndpoints, readChangeSetInput, promoteChain, proposeChangeSet, setDisposition, promoteChangeSet, recordEvidence, reconcileBaseline,
   projectModel, renderProjection, qualifyBaseline, deriveVerification, initModelRepo, adoptExistingModel, loadModel,
   releaseTimeline, releasedBaseline,
-  overview, elementDetail, resolveElement, locate, budgetedExpand, budgetedSearch, outlineOverview, migrateSummaries,
+  overview, elementDetail, resolveElement, locate, budgetedExpand, budgetedSearch, outlineOverview,
   Ledger, ProjectionError, ProposalRejected, PromotionRefused, ReconcileRefused, LedgerError, EvidenceError,
-  type StoryResult, type ValidationIssue, type Renderable, type RenderFormat,
+  type StoryResult, type ValidationIssue, type Renderable, type RenderFormat, type PromoteResult,
 } from 'cb4-ledger'
 import { RepoContext } from './context.js'
 import { help, HELP_TOPICS } from './help.js'
 
 export const SERVER_NAME = 'cb4'
-export const SERVER_VERSION = '0.4.0'
+export const SERVER_VERSION = '0.5.0'
 
 const short = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : null)
 
@@ -249,19 +250,19 @@ export function createServer(ctx: RepoContext): McpServer {
 
   server.registerTool('validate', {
     description: 'Check a change set against the baseline and ledger without writing',
-    inputSchema: { change_set: z.record(z.string(), z.unknown()) },
+    inputSchema: { change_set: z.record(z.string(), z.unknown()).optional(), change_set_path: z.string().optional() },
   }, async (a) => guarded(async () => {
     const s = await ctx.snapshot()
-    const v = await validateInContext(s, a.change_set, s.ledger)
+    const v = await validateInContext(s, await changeSetInput(a), s.ledger)
     return ok(s.head, { valid: v.ok, issues: issueRows(v.issues), ...projectedRows(v.projected) })
   }))
 
   server.registerTool('propose', {
     description: 'Validate and record a change set as proposed (or draft); never touches the model',
-    inputSchema: { change_set: z.record(z.string(), z.unknown()), actor: z.string().optional(), expected_head: z.string().optional(), draft: z.boolean().optional() },
+    inputSchema: { change_set: z.record(z.string(), z.unknown()).optional(), change_set_path: z.string().optional(), actor: z.string().optional(), expected_head: z.string().optional(), draft: z.boolean().optional() },
   }, async (a) => guarded(() => ctx.withWriteLock(async () => {
     const actor = needActor(a.actor)
-    const r = await proposeChangeSet(ctx.repoDir, a.change_set, { actor, expectedBaseRevision: await resolveExpected(ctx, a.expected_head), draft: a.draft })
+    const r = await proposeChangeSet(ctx.repoDir, await changeSetInput(a), { actor, expectedBaseRevision: await resolveExpected(ctx, a.expected_head), draft: a.draft })
     return ok(r.record.sha, { change: r.changeSet.id, disposition: r.changeSet.disposition, revised: r.revised, path: r.record.path, warnings: issueRows(r.validation.issues), ...projectedRows(r.validation.projected) })
   })))
 
@@ -275,17 +276,31 @@ export function createServer(ctx: RepoContext): McpServer {
   })))
 
   server.registerTool('promote', {
-    description: 'Apply an accepted change set to the baseline, marking what is unverified as intended (the only write into model/)',
-    inputSchema: { change_id: z.string(), actor: z.string().optional(), expected_head: z.string().optional() },
+    description: 'Apply an accepted change set to the baseline (the only write into model/); with_dependencies and accept walk a chain',
+    inputSchema: { change_id: z.string(), actor: z.string().optional(), expected_head: z.string().optional(), with_dependencies: z.boolean().optional(), accept: z.boolean().optional() },
   }, async (a) => guarded(() => ctx.withWriteLock(async () => {
     const actor = needActor(a.actor)
-    const r = await promoteChangeSet(ctx.repoDir, a.change_id, { actor, expectedHead: await resolveExpected(ctx, a.expected_head) })
-    return ok(r.sha, {
+    const expectedHead = await resolveExpected(ctx, a.expected_head)
+    const row = (r: PromoteResult) => ({
       change: r.changeId, baseline_was: short(r.baseline), added: r.added, removed: r.removed,
       deferred: r.deferred.map(d => `${d.entityId}:${d.op}`),
       ...(r.reconciled.length ? { reconciled: r.reconciled.map(x => `${x.changeId}:${x.entityId}:${x.op}`) } : {}),
+      ...(r.abandoned.length ? { abandoned: r.abandoned.map(a => `${a.changeId}:${a.entityId}:superseded_by:${a.supersededBy}`) } : {}), 
       ...(r.warnings.length ? { warnings: r.warnings } : {}),
     })
+    if (a.with_dependencies) {
+      const c = await promoteChain(ctx.repoDir, a.change_id, { actor, expectedHead, accept: a.accept })
+      const steps = c.steps.map(s => ({ ...(s.accepted ? { accepted: true } : {}), ...row(s.promoted) }))
+      if (c.stopped && !c.steps.length) throw new Error(`${c.stopped.changeId}: ${c.stopped.error}`)
+      return ok(await ctx.head(), { order: c.order, steps, ...(c.stopped ? { stopped: c.stopped } : {}) })
+    }
+    let accepted = false
+    if (a.accept && (await ctx.snapshot()).ledger.get(a.change_id)?.changeSet.disposition === 'proposed') {
+      await setDisposition(ctx.repoDir, a.change_id, 'accepted', { actor, expectedHead })
+      accepted = true
+    }
+    const r = await promoteChangeSet(ctx.repoDir, a.change_id, { actor, expectedHead: accepted ? undefined : expectedHead })
+    return ok(r.sha, { ...(accepted ? { accepted: true } : {}), ...row(r) })
   })))
 
   server.registerTool('record_evidence', {
@@ -296,11 +311,21 @@ export function createServer(ctx: RepoContext): McpServer {
     const r = await recordEvidence(ctx.repoDir, a.change_id, a.evidence, { actor, expectedRevision: await resolveExpected(ctx, a.expected_head) })
     const s = await ctx.snapshot()
     const v = s.ledger.get(a.change_id)!.verification
+    const elementId = (fqn: string) => s.registry.elementByFqn(fqn)?.stableId
+    const linked = relationshipsWithCoveredEndpoints(s.ledger.get(a.change_id)!.changeSet, v, id => {
+      const rel = s.registry.relationship(id)
+      const from = rel && elementId(rel.fromFqn), to = rel && elementId(rel.toFqn)
+      return from && to ? { from, to } : undefined
+    })
+    const coverage = v.uncovered.length ? {
+      uncovered: v.uncovered,
+      ...(linked.length ? { hint: `${linked.join(', ')}: both endpoints are covered but the relationship is not; if the observation saw the link, record evidence naming it (or omit targets to cover every target)` } : {}),
+    } : {}
     // The evidence is committed either way; a failed reconciliation is reported, not fatal.
     const reconcile = await reconcileBaseline(ctx.repoDir, { actor })
-      .then(x => ({ changed: x.changed, ...(x.applied.length ? { applied: x.applied.map(o => `${o.changeId}:${o.entityId}:${o.op}`) } : {}), ...(x.warnings.length ? { warnings: x.warnings } : {}) }))
+      .then(x => ({ changed: x.changed, ...(x.applied.length ? { applied: x.applied.map(o => `${o.changeId}:${o.entityId}:${o.op}`) } : {}), ...(x.abandoned.length ? { abandoned: x.abandoned.map(a => `${a.changeId}:${a.entityId}:superseded_by:${a.supersededBy}`) } : {}), ...(x.warnings.length ? { warnings: x.warnings } : {}) }))
       .catch((e: unknown) => ({ changed: false, error: e instanceof Error ? e.message.split('\n')[0] : String(e) }))
-    return ok(await ctx.head(), { change: a.change_id, evidence: r.record.id, verification: v.status, warnings: r.warnings, reconcile })
+    return ok(await ctx.head(), { change: a.change_id, evidence: r.record.id, verification: v.status, ...coverage, warnings: r.warnings, reconcile })
   })))
 
   server.registerTool('reconcile', {
@@ -309,7 +334,7 @@ export function createServer(ctx: RepoContext): McpServer {
   }, async (a) => guarded(() => ctx.withWriteLock(async () => {
     const actor = needActor(a.actor)
     const r = await reconcileBaseline(ctx.repoDir, { actor, expectedHead: await resolveExpected(ctx, a.expected_head) })
-    return ok(r.sha, { changed: r.changed, applied: r.applied.map(o => `${o.changeId}:${o.entityId}:${o.op}`), counts: r.counts, ...(r.warnings.length ? { warnings: r.warnings } : {}) })
+    return ok(r.sha, { changed: r.changed, applied: r.applied.map(o => `${o.changeId}:${o.entityId}:${o.op}`), ...(r.abandoned.length ? { abandoned: r.abandoned.map(a => `${a.changeId}:${a.entityId}:superseded_by:${a.supersededBy}`) } : {}), counts: r.counts, ...(r.warnings.length ? { warnings: r.warnings } : {}) })
   })))
 
   server.registerTool('project', {
@@ -370,19 +395,6 @@ export function createServer(ctx: RepoContext): McpServer {
     })
   }))
 
-  server.registerTool('migrate', {
-    description: 'Store derived element summaries as one editorial change set (wording only, statuses untouched)',
-    inputSchema: { what: z.enum(['summaries']), dry_run: z.boolean().optional(), actor: z.string().optional(), expected_head: z.string().optional() },
-  }, async (a) => guarded(() => ctx.withWriteLock(async () => {
-    const actor = needActor(a.actor)
-    const r = await migrateSummaries(ctx.repoDir, { actor, dryRun: a.dry_run, expectedHead: await resolveExpected(ctx, a.expected_head) })
-    return ok(r.head, {
-      what: a.what, change: r.changeId, stored: a.dry_run ? 0 : r.operations.length,
-      ...(a.dry_run ? { would_store: r.operations.map(o => ({ id: o.id, summary: (o as { set: { summary?: string } }).set.summary })) } : {}),
-      skipped: { no_description: r.skipped.noDescription.length, without_stable_id: r.skipped.withoutStableId.length },
-    })
-  })))
-
   server.registerTool('bootstrap', {
     description: 'Adopt a system: init an empty model repo, or adopt an existing LikeC4 model as inferred baseline (help adopt)',
     inputSchema: {
@@ -404,6 +416,14 @@ export function createServer(ctx: RepoContext): McpServer {
 }
 
 /** expected_head may be a short sha; resolve it to the full sha so the library's equality check works. */
+/** A change set passed inline (change_set) or as a YAML/JSON file (change_set_path; relative to the server's working directory). */
+async function changeSetInput(a: { change_set?: Record<string, unknown>; change_set_path?: string }): Promise<Record<string, unknown>> {
+  if (a.change_set && a.change_set_path) throw new Error('pass change_set or change_set_path, not both')
+  if (a.change_set_path) return readChangeSetInput(resolve(process.cwd(), a.change_set_path))
+  if (a.change_set) return a.change_set
+  throw new Error('change_set or change_set_path is required')
+}
+
 async function resolveExpected(ctx: RepoContext, expected?: string): Promise<string | undefined> {
   if (!expected) return undefined
   try { return await ctx.git.revParse(expected) } catch { return expected }

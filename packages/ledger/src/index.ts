@@ -12,13 +12,13 @@ export {
   isReservedTag, isReservedMetadataKey, isLikeC4ReservedWord, flagsOfTags, userTags, type StatusFlag,
 } from './reserved.js'
 export {
-  finalizeBaseline, annotateStatuses, deriveEntityStatus, ensureReservedTags, planPromotion, markDeferred, markMoves, readPending, intendedIds, isIntended,
-  type EntityStatus, type StatusSummary, type StatusCount, type HistoryOptions, type AppliedOperation, type FinalizeResult, type PromotionPlan,
+  finalizeBaseline, annotateStatuses, deriveEntityStatus, ensureReservedTags, planPromotion, markDeferred, markMoves, readPending, intendedIds, isIntended, pendingUpdates, promotedOrder, withoutSuperseded, supersessions,
+  type EntityStatus, type StatusSummary, type StatusCount, type HistoryOptions, type AppliedOperation, type AbandonedOperation, type FinalizeResult, type PromotionPlan,
 } from './status.js'
 export { reconcileBaseline, ReconcileRefused, type ReconcileOptions, type ReconcileResult } from './reconcile.js'
 export { applyOperation, patchProps, WorkingIds, emptyDiff, type OperationDiff, type ApplyOperationOptions, type PropertyPatch } from './operations.js'
 export {
-  Ledger, LedgerError, CHANGES_DIR, changeSetPath, parseChangeSet, serializeChangeSet, participantsOf, compareRecorded,
+  Ledger, LedgerError, CHANGES_DIR, changeSetPath, parseChangeSet, readChangeSetInput, serializeChangeSet, participantsOf, compareRecorded,
   type ChangeRecord, type Participation, type ParticipationRole, type LedgerSnapshot, type LedgerProblem, type LoadLedgerOptions,
 } from './ledger.js'
 export { locate, type LocateOptions, type LocateResult, type LocateLevel, type ConnectedEntity, type RelatedEntity, type ContainerDetail, type ContainerRow, type LocateFocus, type Omitted } from './locate.js'
@@ -34,12 +34,14 @@ export {
   proposeChangeSet, validateInContext, setDisposition, ProposalRejected, DISPOSITION_TRANSITIONS,
   type ProposeOptions, type ProposeResult, type DispositionOptions, type ContextualValidation,
 } from './propose.js'
-export { promoteChangeSet, PromotionRefused, type PromoteOptions, type PromoteResult, type PromotionPolicy } from './promote.js'
+export { promoteChangeSet, promoteChain, PromotionRefused, type PromoteOptions, type PromoteResult, type PromotionPolicy, type PromoteChainOptions, type PromoteChainResult, type ChainStep } from './promote.js'
 export {
   EvidenceRecord, EvidenceFile, EvidenceKind, EvidenceResult, EvidenceError, KIND_CLASS, EVIDENCE_DIR,
-  evidencePath, parseEvidenceFile, serializeEvidenceFile, deriveVerification, deriveImplementation, targetVerification, targetsOf, recordEvidence,
+  evidencePath, parseEvidenceFile, serializeEvidenceFile, deriveVerification, deriveImplementation, targetVerification, targetsOf, recordEvidence, relationshipsWithCoveredEndpoints,
   type EvidenceRecordInput, type Verification, type VerificationStatus, type VerificationPolicy, type TargetVerification, type RecordEvidenceOptions, type RecordEvidenceResult,
 } from './evidence.js'
+export { intendedDescriptions, droppedSentences, expandDescriptionAppends, type DescriptionLookup } from './intended.js'
+export { repairUpdateOrder, findOutOfOrderValues, type RestoredValue, type RepairUpdateOrderOptions, type RepairUpdateOrderResult } from './repair.js'
 export { qualifyBaseline, QUALIFICATION_TAGS, type QualifiedBaseline, type EntityQualification, type QualificationStatus, type QualifyOptions } from './qualify.js'
 export { formatStory, formatEntry, formatQualification } from './format.js'
 export { releaseTimeline, releasedBaseline, promotionCommitOf, type ReleaseEvent, type ReleasedBaseline, type ReleasedBaselineOptions, type TimelineOptions } from './releases.js'

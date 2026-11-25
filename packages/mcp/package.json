@@ -1,6 +1,6 @@
 {
   "name": "cb4-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "See changes to your architecture before and as you build them: an MCP server and CLI that lets coding agents model a system as C4 (LikeC4), propose and review changes, promote accepted ones, and record the evidence that verifies them",
   "license": "MIT",
   "author": "borwood",
@@ -57,7 +57,7 @@
     "node": ">=22.22"
   },
   "dependencies": {
-    "cb4-ledger": "0.4.0",
+    "cb4-ledger": "0.5.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "zod": "4.6.7"
   },

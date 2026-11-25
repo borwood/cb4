@@ -52,7 +52,15 @@ happens when the work lands on the main branch.
 ```
 cb4 [repoDir] [--actor <name>]     MCP server (stdio) over a model repository
 cb4 skill [name...] [--codex] [--to <dir>]   install the shipped skills (or the named ones) for your coding agent
+cb4 migrate summaries [repoDir] [--actor <name>] [--dry-run]   one-off upgrade step
+cb4 migrate update-order [repoDir] [--actor <name>] [--dry-run]   one-off upgrade step
 ```
+
+Migrations are upgrade steps, run once when the changelog says so; they are not MCP tools.
+`migrate summaries` stores the summaries reads derive from older elements' descriptions as one
+editorial change set (wording only, statuses untouched). `--dry-run` lists them first.
+`migrate update-order` restores values an earlier version overwrote when an older update was
+verified after a newer one; it is derived from the ledger and only touches values it can explain.
 
 Environment: `CB4_REPO`, `CB4_ACTOR`. `--actor` is the default recorded on writes; a tool
 call may name its own. Each agent process gets its own server process; that is fine (see
@@ -84,13 +92,12 @@ were installed with.
 | story | change sets involving an entity or subtree, oldest first, paged; as of a revision or date |
 | changes | list change sets by disposition, promotion, entity, or source ref (change-set sources and evidence) |
 | change | one change set with commits, derived verification, and optionally its evidence |
-| validate | dry-run a change set against the baseline and ledger, with unpromoted `depends_on` projected first |
+| validate | dry-run a change set (inline or `change_set_path`) against the baseline and ledger, with unpromoted `depends_on` projected first |
 | propose | validate the same way and record a change set as proposed or draft; never touches the model |
 | set_disposition | governance transition (draft, proposed, accepted, rejected, superseded) |
-| promote | apply an accepted change set to the baseline, marking unverified parts as intended; the only write into `model/` |
-| record_evidence | append an evidence record; verification follows from it, and the model is reconciled |
-| reconcile | apply verified deferred operations and refresh status tags; idempotent |
-| migrate | `what=summaries`: store the summaries reads derive for older elements as one editorial change set (wording only, statuses untouched); `dry_run` lists them |
+| promote | apply an accepted change set to the baseline, marking unverified parts as intended; the only write into `model/`. `with_dependencies` and `accept` take a whole `depends_on` chain |
+| record_evidence | append an evidence record; verification follows from it, and the model is reconciled. Returns what is still `uncovered` |
+| reconcile | apply verified deferred operations, drop those of superseded change sets, and refresh status tags; idempotent |
 | project | candidate projection of change sets, optionally rendered as DSL, HTML or PNG |
 | qualify | the committed baseline annotated per entity with derived verification |
 | render | the committed baseline for people: interactive HTML site (default), PNG, or DSL |

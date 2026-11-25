@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { Git } from 'cb4-ledger'
 import { createServer } from '../src/server.js'
 import { RepoContext } from '../src/context.js'
+import { migrateCommand } from '../src/migrate-cli.js'
 
 const EXAMPLE_DIR = resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..', 'examples', 'billing')
 
@@ -48,10 +49,10 @@ beforeAll(async () => {
 afterAll(async () => { await client.close(); await rm(dir, { recursive: true, force: true }) })
 
 describe('surface', () => {
-  it('exposes 21 tools with a small token footprint, and help on demand', async () => {
+  it('exposes 20 tools with a small token footprint, and help on demand', async () => {
     const tools = (await client.listTools()).tools
     expect(tools.map(t => t.name).sort()).toEqual([
-      'bootstrap', 'change', 'changes', 'element', 'expand', 'help', 'locate', 'migrate', 'overview', 'project', 'promote', 'propose', 'qualify', 'reconcile', 'record_evidence', 'releases', 'render', 'search', 'set_disposition', 'story', 'validate',
+      'bootstrap', 'change', 'changes', 'element', 'expand', 'help', 'locate', 'overview', 'project', 'promote', 'propose', 'qualify', 'reconcile', 'record_evidence', 'releases', 'render', 'search', 'set_disposition', 'story', 'validate',
     ])
     const bytes = JSON.stringify(tools).length
     expect(bytes).toBeLessThan(14_000) // roughly 3.5k tokens for the whole tool list
@@ -478,22 +479,61 @@ describe('writes and concurrency', () => {
   })
 })
 
-describe('migrate', () => {
+describe('migrate (CLI, not a tool)', () => {
   it('stores derived summaries in one editorial change set; reads then show them as stored', async () => {
-    const dry = await call(client, 'migrate', { what: 'summaries', dry_run: true, actor: 'tester' })
-    expect(dry.json).toMatchObject({ ok: true, change: null, stored: 0 })
-    expect(dry.json.would_store.length).toBeGreaterThan(0)
-    const before = (await call(client, 'overview', { format: 'json' })).json.summaries
-    expect(before.derived).toBe(dry.json.would_store.length)
+    const run = async (...args: string[]) => {
+      let text = ''
+      const code = await migrateCommand(args, s => { text += s }, s => { text += s })
+      return { code, text }
+    }
+    expect((await run('summaries', dir)).code).toBe(2) // no actor
+    expect((await run('nonsense', dir, '--actor', 'tester')).text).toMatch(/unknown migration/)
 
-    const head = (await call(client, 'overview', { format: 'json' })).json.head
-    const r = await call(client, 'migrate', { what: 'summaries', actor: 'tester', expected_head: head })
-    expect(r.json).toMatchObject({ ok: true, stored: dry.json.would_store.length })
-    expect(r.json.change).toMatch(/^CHG-\d+$/)
+    const before = (await call(client, 'overview', { format: 'json' })).json.summaries
+    expect(before.derived).toBeGreaterThan(0)
+    expect((await call(client, 'overview')).text).not.toMatch(/migrate/) // reads do not advertise it
+
+    const dry = await run('summaries', dir, '--actor', 'tester', '--dry-run')
+    expect(dry.text).toMatch(new RegExp(`would store ${before.derived} summar(y|ies)`))
+    const r = await run('summaries', dir, '--actor', 'tester')
+    expect(r).toMatchObject({ code: 0, text: expect.stringMatching(new RegExp(`stored ${before.derived} summar(y|ies) in CHG-\\d+`)) })
     const after = (await call(client, 'overview', { format: 'json' })).json.summaries
     expect(after).toEqual({ stored: before.stored + before.derived, derived: 0, none: before.none })
-    expect((await call(client, 'overview')).text).toMatch(/^summaries: \d+ stored, 0 derived/m)
-    expect((await call(client, 'change', { change_id: r.json.change })).json.change).toMatchObject({ editorial: true })
-    expect((await call(client, 'migrate', { what: 'summaries', actor: 'tester' })).json).toMatchObject({ change: null, stored: 0 })
+    const changeId = /in (CHG-\d+)/.exec(r.text)![1]
+    expect((await call(client, 'change', { change_id: changeId })).json.change).toMatchObject({ editorial: true })
+    expect((await run('summaries', dir, '--actor', 'tester')).text).toMatch(/nothing to store/)
+    expect((await run('update-order', dir, '--actor', 'tester', '--dry-run')).text).toMatch(/nothing to restore/)
+  })
+})
+
+describe('chains, files and coverage hints', () => {
+  it('proposes from a file, promotes a dependency chain in one call, and names relationships evidence left out', async () => {
+    const file = join(dir, '..', `cs-${Date.now()}.json`)
+    await writeFile(file, JSON.stringify({
+      id: 'CHG-201', title: 'Customers call the API', intent: 'i', operations: [
+        { op: 'update_element', id: 'ent-customer', set: { technology: 'Browser' } },
+        { op: 'update_element', id: 'ent-billing-api', set: { technology: 'Node' } },
+        { op: 'add_relationship', id: 'rel-customer-calls-api', from: 'ent-customer', to: 'ent-billing-api', title: 'calls' },
+      ],
+    }))
+    const p1 = await call(client, 'propose', { change_set_path: file, actor: 'agent' })
+    expect(p1.isError, p1.text).toBe(false)
+    const p2 = await call(client, 'propose', { change_set: { id: 'CHG-202', title: 't', intent: 'i', depends_on: ['CHG-201'], operations: [{ op: 'update_element', id: 'ent-billing', set: { technology: 'Go' } }] }, actor: 'agent' })
+    expect(p2.isError, p2.text).toBe(false)
+    expect((await call(client, 'propose', { change_set: { id: 'x' }, change_set_path: file, actor: 'agent' })).text).toMatch(/not both/)
+
+    const chain = await call(client, 'promote', { change_id: 'CHG-202', with_dependencies: true, accept: true, actor: 'agent' })
+    expect(chain.isError, chain.text).toBe(false)
+    expect(chain.json.order).toEqual(['CHG-201', 'CHG-202'])
+    expect(chain.json.steps.map((s: any) => [s.change, s.accepted])).toEqual([['CHG-201', true], ['CHG-202', true]])
+
+    // No recorded_by: it defaults to the actor.
+    const ev = await call(client, 'record_evidence', { change_id: 'CHG-201', actor: 'claude', evidence: {
+      id: 'ev-201', kind: 'test', result: 'pass', targets: ['ent-customer', 'ent-billing-api'], source_ref: 'https://ci/201', code_revision: 'abcdef0', observed_at: '2026-05-03T00:00:00Z',
+    } })
+    expect(ev.isError, ev.text).toBe(false)
+    expect(await readFile(join(dir, 'evidence', 'CHG-201.yaml'), 'utf8')).toMatch(/recorded_by: claude/)
+    expect(ev.json).toMatchObject({ verification: 'partial', uncovered: ['rel-customer-calls-api'], hint: expect.stringContaining('rel-customer-calls-api') })
+    await rm(file, { force: true })
   })
 })

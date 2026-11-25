@@ -57,7 +57,14 @@ are relevant without changing them.
 Lifecycle: `propose` (draft or proposed) -> `set_disposition to=accepted` -> `promote`. Rejected
 and superseded are terminal for that id. Re-proposing an id revises it until it is promoted;
 promoted change sets are frozen, so a follow-up or a reversal is a new change set that
-`depends_on` the old one.
+`depends_on` the old one. `promote with_dependencies=true accept=true` accepts and promotes a
+whole `depends_on` chain in order, one commit per step.
+
+To **replace** a promoted change set whose remaining intent no longer holds, promote a correction
+that declares `supersedes: [<old id>]`. Its own operations say what is true now; the old set's
+still-pending updates and removals are dropped unapplied (`abandoned` in the result) and its
+`b4_pending` markers clear. Additions the old set made stay, so the correction removes any that
+are wrong. Evidence recorded on the old set afterwards changes nothing.
 
 Validation (`validate`, and `propose` itself) checks the change set against the baseline **with
 its unpromoted dependencies projected on top**, so a chain of related change sets can be proposed
@@ -65,12 +72,21 @@ and reviewed together. Promotion still goes in dependency order. Names must be L
 and not LikeC4 keywords (`head`, `title`, `kind`, `link`, ...); the validator says so.
 
 Keep a change set to one coherent intent and at most about fifty operations, parents before
-children, relationships after both ends exist.
+children, relationships after both ends exist. A large one can be passed as a file:
+`propose change_set_path=<yaml or json>`.
+
+`update_element` with `description` replaces the whole text. Restate what still holds, or use
+`description_append` to add a paragraph to the intended description (the committed one plus any
+pending or unpromoted-dependency updates). Dropping sentences warns `W_DESCRIPTION_DROPS_TEXT`;
+changing the description without the summary warns `W_SUMMARY_STALE`.
 
 ## Evidence
 
 Evidence is recorded **per change set**, optionally narrowed to `targets` (stable ids that change
 set operates on). A record without `targets` speaks for every target of the change set.
+Relationships are targets of their own: covering both endpoints does not cover the link, so name
+the relationships the run exercised too (`record_evidence` lists what is still `uncovered` and
+hints at relationships whose endpoints are covered). `recorded_by` defaults to the actor.
 
 | Kind | Needs | Effect |
 |---|---|---|
@@ -87,6 +103,10 @@ Recording evidence reconciles the model: covered intended entities lose their fl
 deferred removals and updates are applied, views regenerate. `reconcile` does the same on demand.
 `environment` on a record scopes it; the committed flags use the any-environment view, and
 `qualify environment=<env>` overlays a per-environment view.
+
+`verified` means the entity exists as its change set said, not that every word of its
+description is current: text written while the entity was only planned stays until a change set
+replaces it. Whoever closes out work restates what was built.
 
 Two consequences shape planning. A change set is the unit you expect to prove together, so cut
 change sets along the seams work will actually land in. And since evidence names targets, one
@@ -132,6 +152,11 @@ invisible to `search`, `expand` and `element`, has no views, and is overwritten 
    entity keeps the original plan, the fork and the evidence in order.
 5. **Record evidence against the latest change set that operated on an entity.** Evidence on an
    earlier one still counts, but the latest is where readers look.
+6. **Close out a feature with what was built.** When the work is done, a correction change set
+   updates each entity the feature touched to the built text (`update_element` with the real
+   description and technology), verified by the closing run, and declares `supersedes` for plan
+   change sets whose remaining pending updates will not be built as written. Without it, plan text
+   and stale pending markers outlive the feature.
 
 Do not: put the whole roadmap in one change set; leave the plan unpromoted and build "against"
 it; re-add an entity that already exists in order to claim it; record a review or a deployment as
@@ -146,9 +171,6 @@ if it verified anything; set `implementation` or any `b4-*` tag yourself.
   instead of raising the budget. Then `element <id> qualify=true` for the parts you will touch.
   A `pending` list on a row means the entity is not exactly as drawn; read `b4_change` to find the
   change set and `change <id>` for what is still unproven.
-- **Once per repository**: if `overview` reports summaries derived from descriptions, run
-  `migrate what=summaries` (try `dry_run=true` first) to store them. It records one editorial
-  change set and changes no status.
 - **When the architecture will change**: draft the change set from the requirement (every new
   element needs a one-line `summary`; the detail goes in `description`), `validate`,
   `project render=dsl` (or `html` for a person), `propose`. Promotion is a reviewer's call.

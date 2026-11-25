@@ -14,7 +14,7 @@ import { loadModel, modelFromParsedData, MODEL_DIR } from './model.js'
 import { applyChangeSets, ProjectionError, type Projection, type ProjectionIssue } from './projection.js'
 import { commitMessageFor } from './provenance.js'
 import type { ChangeSet, Disposition, Implementation, Operation } from './schema.js'
-import { finalizeBaseline, intendedIds, markDeferred, markMoves, planPromotion, type AppliedOperation, type PromotionPlan } from './status.js'
+import { finalizeBaseline, intendedIds, markDeferred, markMoves, planPromotion, type AbandonedOperation, type AppliedOperation, type PromotionPlan } from './status.js'
 import { generateAndCheck, summarizeErrors, writeWorkspace } from './workspace.js'
 
 export interface PromotionPolicy {
@@ -44,6 +44,8 @@ export interface PromoteResult {
   deferred: { entityId: string; op: Operation['op'] }[]
   /** Earlier deferred operations that were verified in the meantime and applied by this promotion. */
   reconciled: AppliedOperation[]
+  /** Pending operations of change sets this one supersedes, dropped unapplied. */
+  abandoned: AbandonedOperation[]
   warnings: string[]
 }
 
@@ -132,7 +134,11 @@ export async function promoteChangeSet(repoDir: string, changeId: string, opts: 
       actor: opts.actor,
       implementation: rec.implementation,
       subject: `promote ${cs.id}: ${cs.title}`,
-      body: [`Promoted-From: ${head}`, ...(plan.deferred.length ? [`Deferred: ${describe(plan.deferred)}`] : [])].join('\n'),
+      body: [
+        `Promoted-From: ${head}`,
+        ...(plan.deferred.length ? [`Deferred: ${describe(plan.deferred)}`] : []),
+        ...final.abandoned.map(a => `Abandoned: ${a.changeId} on ${a.entityId} (superseded by ${a.supersededBy})`),
+      ].join('\n'),
     })
     const sha = await git.commit(message, { date: opts.date })
     return {
@@ -141,6 +147,7 @@ export async function promoteChangeSet(repoDir: string, changeId: string, opts: 
       removed: projection.diff.removed.map(r => r.entityId),
       deferred: plan.deferred.map(op => ({ entityId: op.id, op: op.op })),
       reconciled: final.applied,
+      abandoned: final.abandoned,
       warnings,
     }
   } catch (e) {
@@ -160,3 +167,60 @@ const describe = (ops: Operation[]) => ops.map(op => `${op.op} ${op.id}`).join('
 const stableIds = (reg: IdentityRegistry) => [...reg.elements(), ...reg.relationships()].map(r => r.stableId)
 
 export type { PromotionPlan }
+
+// ---------------------------------------------------------------------------------------------
+// Chains
+
+export interface PromoteChainOptions extends PromoteOptions {
+  /** Accept proposed change sets in the chain before promoting them. Default false: each must already be accepted. */
+  accept?: boolean
+}
+
+export interface ChainStep {
+  changeId: string
+  /** Set when this call accepted the change set. */
+  accepted?: string
+  promoted: PromoteResult
+}
+
+export interface PromoteChainResult {
+  /** Change sets in the order they were taken: unpromoted dependencies first, the named one last. */
+  order: string[]
+  steps: ChainStep[]
+  /** Where the chain stopped, when it did; earlier steps stay committed. */
+  stopped?: { changeId: string; error: string }
+}
+
+/**
+ * Promote a change set together with its unpromoted dependencies, in dependency order, one commit
+ * per acceptance and per promotion so history reads as if each were done by hand. `expectedHead`
+ * is checked once, before the first step. Stops at the first refusal and reports it.
+ */
+export async function promoteChain(repoDir: string, changeId: string, opts: PromoteChainOptions): Promise<PromoteChainResult> {
+  const { setDisposition, unpromotedDependencies } = await import('./propose.js')
+  const { orderByDependencies } = await import('./projection.js')
+  const git = new Git(repoDir)
+  const head = await git.headSha()
+  if (opts.expectedHead !== undefined && head !== opts.expectedHead) throw new PromotionRefused(`repository moved: expected HEAD ${opts.expectedHead}, found ${head}`)
+  const ledger = await Ledger.load(repoDir)
+  const rec = ledger.get(changeId)
+  if (!rec) throw new PromotionRefused(`${changeId} is not in the ledger`)
+  if (rec.changeSet.promotion) throw new PromotionRefused(`${changeId} is already promoted`)
+
+  const issues: ProjectionIssue[] = []
+  const order = orderByDependencies([...unpromotedDependencies(rec.changeSet.depends_on, changeId, ledger), rec.changeSet], ledger, issues)
+  if (issues.length) throw new PromotionRefused(`the chain to ${changeId} cannot be ordered: ${issues[0]!.message}`, issues)
+
+  const steps: ChainStep[] = []
+  for (const cs of order) {
+    try {
+      let accepted: string | undefined
+      if (opts.accept && cs.disposition === 'proposed') accepted = (await setDisposition(repoDir, cs.id, 'accepted', { actor: opts.actor, date: opts.date })).sha
+      const promoted = await promoteChangeSet(repoDir, cs.id, { actor: opts.actor, policy: opts.policy, date: opts.date })
+      steps.push({ changeId: cs.id, ...(accepted ? { accepted } : {}), promoted })
+    } catch (e) {
+      return { order: order.map(c => c.id), steps, stopped: { changeId: cs.id, error: e instanceof Error ? e.message : String(e) } }
+    }
+  }
+  return { order: order.map(c => c.id), steps }
+}

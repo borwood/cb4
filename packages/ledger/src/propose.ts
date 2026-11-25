@@ -8,6 +8,7 @@ import { applyChangeSets, orderByDependencies, ProjectionError, type ProjectionI
 import { recordChangeSet, type RecordResult } from './provenance.js'
 import { ChangeSet, normalizeChangeSetInput, type ChangeSet as ChangeSetT, type Disposition } from './schema.js'
 import { validateChangeSet, type ValidationIssue, type ValidationResult } from './validate.js'
+import { expandDescriptionAppends, intendedDescriptions } from './intended.js'
 
 export interface ProposeOptions {
   actor: string
@@ -36,6 +37,8 @@ export class ProposalRejected extends Error {
 export interface ContextualValidation extends ValidationResult {
   /** Unpromoted change sets from depends_on (transitively) that were projected onto the baseline before validating. */
   projected: string[]
+  /** The input as validated: description_append expanded into full descriptions. What propose records. */
+  input: unknown
 }
 
 /**
@@ -46,41 +49,63 @@ export interface ContextualValidation extends ValidationResult {
  */
 export async function validateInContext(loaded: Pick<LoadedModel, 'parsedData' | 'model'>, input: unknown, ledger: Ledger): Promise<ContextualValidation> {
   const registry = IdentityRegistry.fromModel(loaded.model)
-  const pre = ChangeSet.safeParse(normalizeChangeSetInput(input).input)
-  const deps = pre.success ? unpromotedDependencies(pre.data, ledger) : []
-  if (!deps.length) return { ...validateChangeSet(input, { registry, ledger, authoring: true }), projected: [] }
+  const deps = unpromotedDependencies(dependsOnOf(input), idOf(input), ledger)
+  let order: ChangeSetT[] = deps
+  if (deps.length) {
+    const issues: ProjectionIssue[] = []
+    const ordered = orderByDependencies(deps, ledger, issues)
+    if (!issues.length) order = ordered
+  }
+  const intendedDescription = intendedDescriptions(loaded.parsedData, registry, ledger, order)
+  const expanded = expandDescriptionAppends(input, intendedDescription)
+  input = expanded.input
+  const appendIssues: ValidationIssue[] = expanded.errors.map(e => ({ severity: 'error', code: 'E_DESCRIPTION_APPEND', path: e.path, message: e.message }))
+  const finish = (r: ValidationResult, projected: string[], extra: ValidationIssue[] = []): ContextualValidation => {
+    const issues = [...extra, ...appendIssues, ...r.issues]
+    return { ...r, ok: r.ok && !appendIssues.length, issues, projected, input }
+  }
+  if (!deps.length) return finish(validateChangeSet(input, { registry, ledger, authoring: true, intendedDescription }), [])
 
   try {
     const issues: ProjectionIssue[] = []
-    const order = orderByDependencies(deps, ledger, issues)
+    const ordered = orderByDependencies(deps, ledger, issues)
     if (issues.length) throw new ProjectionError('dependencies cannot be ordered', issues)
-    const projection = await applyChangeSets(loaded.parsedData, order, { baseline: { source: 'worktree', revision: null }, highlight: false, ledger })
-    return { ...validateChangeSet(input, { registry: projection.registry, ledger, authoring: true }), projected: projection.applied }
+    const projection = await applyChangeSets(loaded.parsedData, ordered, { baseline: { source: 'worktree', revision: null }, highlight: false, ledger })
+    return finish(validateChangeSet(input, { registry: projection.registry, ledger, authoring: true, intendedDescription }), projection.applied)
   } catch (e) {
     if (!(e instanceof ProjectionError)) throw e
-    const result = validateChangeSet(input, { registry, ledger, authoring: true })
+    const result = validateChangeSet(input, { registry, ledger, authoring: true, intendedDescription })
     const failing = [...new Set(e.issues.map(i => i.changeId).filter(Boolean))].join(', ')
     const warning: ValidationIssue = {
       severity: 'warning', code: 'W_DEPENDENCY_NOT_PROJECTED', path: '/depends_on',
       message: `unpromoted dependencies could not be projected onto the baseline (${failing}: ${e.issues[0]?.message ?? e.message}); validated against the baseline alone`,
     }
-    return { ...result, issues: [warning, ...result.issues], projected: [] }
+    return finish(result, [], [warning])
   }
 }
 
+const dependsOnOf = (input: unknown): string[] => {
+  const d = (input as { depends_on?: unknown } | null)?.depends_on
+  return Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : []
+}
+const idOf = (input: unknown): string | undefined => {
+  const id = (input as { id?: unknown } | null)?.id
+  return typeof id === 'string' ? id : undefined
+}
+
 /** Dependencies of `cs`, transitively, that are in the ledger and not yet promoted. */
-function unpromotedDependencies(cs: ChangeSetT, ledger: Ledger): ChangeSetT[] {
+export function unpromotedDependencies(dependsOn: string[], selfId: string | undefined, ledger: Ledger): ChangeSetT[] {
   const out = new Map<string, ChangeSetT>()
   const visit = (ids: string[]) => {
     for (const id of ids) {
-      if (id === cs.id || out.has(id)) continue
+      if (id === selfId || out.has(id)) continue
       const rec = ledger.get(id)
       if (!rec || rec.changeSet.promotion) continue
       out.set(id, rec.changeSet)
       visit(rec.changeSet.depends_on)
     }
   }
-  visit(cs.depends_on)
+  visit(dependsOn)
   return [...out.values()]
 }
 
@@ -95,9 +120,11 @@ export async function proposeChangeSet(repoDir: string, input: unknown, opts: Pr
   const ledger = await Ledger.load(repoDir)
   const loaded = await loadModel(repoDir)
 
+  const prepared = await validateInContext(loaded, input, ledger)
+  input = prepared.input
   const pre = ChangeSet.safeParse(normalizeChangeSetInput(input).input)
-  if (!pre.success) {
-    const validation = await validateInContext(loaded, input, ledger)
+  if (!pre.success || prepared.issues.some(i => i.code === 'E_DESCRIPTION_APPEND')) {
+    const validation = prepared
     throw new ProposalRejected(`proposal rejected:\n  ${validation.issues.map(i => `${i.path}: ${i.message}`).join('\n  ')}`, validation)
   }
   const existing = ledger.get(pre.data.id)

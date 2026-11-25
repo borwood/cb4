@@ -129,6 +129,20 @@ export function parseChangeSet(text: string, path = '<inline>'): ChangeSetT {
   return result.data
 }
 
+/**
+ * Read a change set written to a file (YAML or JSON) as raw input for validation or proposal: not
+ * yet checked against the schema, so description_append and deprecated fields are still handled.
+ * Lets agents pass large change sets by path instead of inline.
+ */
+export async function readChangeSetInput(path: string): Promise<Record<string, unknown>> {
+  let text: string
+  try { text = await readFile(path, 'utf8') } catch (e: any) { throw new Error(`cannot read change set file ${path}: ${e.code ?? e.message}`) }
+  let raw: unknown
+  try { raw = YAML.parse(text) } catch (e: any) { throw new Error(`${path}: invalid YAML/JSON: ${e.message}`) }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${path}: a change set file holds one mapping (id, title, intent, operations, ...)`)
+  return raw as Record<string, unknown>
+}
+
 export function serializeChangeSet(cs: ChangeSetT): string {
   return YAML.stringify(cs, { lineWidth: 0 })
 }

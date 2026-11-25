@@ -1,11 +1,13 @@
 // cb4 [repoDir] [--actor <name>]        start the MCP server (stdio) over a model repository
 // cb4 skill [name...] [--codex] [--to <dir>]   install the shipped skills into the current project
+// cb4 migrate summaries [repoDir] [--actor <name>] [--dry-run]   one-off upgrade step (see CHANGELOG)
 // Env: CB4_REPO, CB4_ACTOR.
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { RepoContext } from './context.js'
+import { migrateCommand, MIGRATE_USAGE } from './migrate-cli.js'
 import { resolveRepoDir } from './paths.js'
 import { createServer, SERVER_VERSION } from './server.js'
 
@@ -14,7 +16,7 @@ const USAGE = `usage:
   cb4 skill [name...] [--codex] [--to <dir>]
             install the shipped skills (cb4-guide, cb4-adopt) for your coding agent;
             name one or more to install only those
-
+${MIGRATE_USAGE}
   repoDir   model repository: its own git repository with model/, changes/, evidence/.
             Created on first use by the bootstrap tool. Default: $CB4_REPO or cwd.
   --actor   default actor recorded on writes (env CB4_ACTOR); tools may override per call.
@@ -72,4 +74,5 @@ const argv = process.argv.slice(2)
 if (argv.includes('-h') || argv.includes('--help')) { process.stdout.write(USAGE); process.exit(0) }
 if (argv.includes('-v') || argv.includes('--version')) { process.stdout.write(`${SERVER_VERSION}\n`); process.exit(0) }
 if (argv[0] === 'skill') await installSkill(argv.slice(1))
+else if (argv[0] === 'migrate') process.exitCode = await migrateCommand(argv.slice(1))
 else await serve(argv)
